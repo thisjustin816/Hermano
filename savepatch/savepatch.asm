@@ -119,7 +119,7 @@ hgu_changed:
         ld a,(VIDAS)
         or a
         jr z,hgu_done           ; never checkpoint a run that is already over
-        jr save_block
+        jp save_block           ; jp, not jr: the game-over hook sits between
 hgu_done:
         jp sram_off
 
@@ -223,6 +223,31 @@ hmu_keys:
         ret nz                  ; B was already held last frame - not a fresh press
         jp load_game
 hmu_done:
+        jp sram_off
+
+; =====================================================================
+; Hook D - installed as startFuncs[StateGameOver].
+;
+; This state is only ever reached with the continue counter at zero: the
+; death path checks it and sends you to the continue screen while any
+; remain, and the game's other route into it zeroes the counter on the
+; instruction before. So arriving here means the run is over on the
+; game's own terms, and the save goes with it - the next boot starts
+; from stage 1-1, the way the game behaved before it could save at all.
+;
+; Only the magic is cleared. That is enough for save_valid to reject the
+; block, and the next checkpoint rewrites the whole header anyway.
+; =====================================================================
+hook_gameover_start:
+        call GAMEOVER_START     ; stock Start_StateGameOver (bank $0E, already paged in)
+        call sram_on
+        xor a                   ; after sram_on, which clobbers A
+        ld hl,SRAM_MAGIC
+        ld b,5
+hgo_wipe:
+        ld (hl+),a
+        dec b
+        jr nz,hgo_wipe
         jp sram_off
 
 ; =====================================================================

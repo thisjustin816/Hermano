@@ -78,6 +78,23 @@ save is untouched: it still names the last stage you played. `B:CONTINUE` comes
 back up and drops you at the start of the final stage, so the ending can be
 replayed. Nothing unlocks, and there is no new game plus.
 
+### Game over
+
+Spending your last continue clears the save. The next boot starts from stage
+1-1, the way the game behaved before it could save at all.
+
+This is deliberate: the game is built to feel like a cartridge-era platformer,
+and a save is already a concession. Losing the run when the run is genuinely
+over keeps the stakes the original had. Nothing is softened — the continue
+count itself is part of the saved block, so resuming gives you the continues
+you actually had left, not a fresh three.
+
+The continue screen does **not** clear it. `StateGameOver` is only ever entered
+once every continue is spent: the death path checks the counter and sends you
+to the continue screen while any remain, and the game's other route into game
+over zeroes the counter on the instruction before. So hooking that state
+catches exactly "the run is over", and nothing else.
+
 ### Starting a new game over an existing save
 
 Pressing START does **not** immediately destroy the save. It survives the title
@@ -96,8 +113,8 @@ The autosave fires during gameplay whenever the run's identity changes:
 - **reaching a new world**;
 - **losing or gaining a life**.
 
-It never checkpoints a run whose lives have already hit zero, so a game over
-always leaves the previous save intact.
+It never checkpoints a run whose lives have already hit zero — but spending
+your last continue clears the save outright, as above.
 
 **Resuming always starts the saved stage from the beginning.** The game does
 have mid-stage checkpoints — `StateGame`'s START spawns the player at
@@ -155,10 +172,11 @@ The patch overwrites **no original code or data**. Its entire footprint is:
 | `$3500`–`$371F`   | 544  | injected code and tiles, into what was `$FF` padding |
 | `$6F25`, `$6F28`  | 2    | `startFuncs[StateMenu]` → `hook_menu_start`       |
 | `$6F2D`, `$6F30`  | 2    | `updateFuncs[StateMenu]` → `hook_menu_update`     |
+| `$6F50`, `$6F53`  | 2    | `startFuncs[StateGameOver]` → `hook_gameover_start` |
 | `$6F6E`, `$6F71`  | 2    | `updateFuncs[StateGame]` → `hook_game_update`     |
 
 ZGB's `InitStates` builds its state function tables in WRAM at runtime.
-Rewriting three of the pointer immediates redirects individual state functions
+Rewriting four of the pointer immediates redirects individual state functions
 into wrappers in bank 0, each of which calls the stock function first and then
 adds its own behaviour. Bank 0 is permanently mapped, so the wrappers are
 reachable whatever the game has paged in; the dispatcher has already paged in

@@ -56,6 +56,7 @@ ROM_PROFILES = {
             "LEVEL": 0xC11C, "VIDAS": 0xC11E, "MUNDO": 0xC126,
             "SETSTATE": 0x0AB0,
             "MENU_START": 0x7EF7, "MENU_UPDATE": 0x7FA6, "GAME_UPDATE": 0x7FFC,
+            "GAMEOVER_START": 0x7FC6,
             "MAX_WORLD": 6, "MAX_STAGE": 2, "MAX_SPEC_B": 3, "MAX_SPEC_A": 7,
         },
         "vars": [(0xC10E, 1), (0xC110, 1), (0xC113, 13), (0xC122, 1),
@@ -65,6 +66,7 @@ ROM_PROFILES = {
                   "SRAM_MUNDO": 0xC126},
         "hooks": [(0x6F25, 0x6F28, 0x7EF7, "hook_menu_start"),
                   (0x6F2D, 0x6F30, 0x7FA6, "hook_menu_update"),
+                  (0x6F50, 0x6F53, 0x7FC6, "hook_gameover_start"),
                   (0x6F6E, 0x6F71, 0x7FFC, "hook_game_update")],
     },
     "631a7113e6fb5fd0c876a2f19030007c": {
@@ -75,6 +77,7 @@ ROM_PROFILES = {
             "LEVEL": 0xC118, "VIDAS": 0xC11A, "MUNDO": 0xC122,
             "SETSTATE": 0x0AB0,
             "MENU_START": 0x7EF7, "MENU_UPDATE": 0x7F97, "GAME_UPDATE": 0x7FFC,
+            "GAMEOVER_START": 0x7FC6,
             "MAX_WORLD": 6, "MAX_STAGE": 2, "MAX_SPEC_B": 3, "MAX_SPEC_A": 7,
         },
         "vars": [(0xC10D, 1), (0xC10F, 1), (0xC112, 5), (0xC117, 5),
@@ -84,6 +87,7 @@ ROM_PROFILES = {
                   "SRAM_MUNDO": 0xC122},
         "hooks": [(0x6F25, 0x6F28, 0x7EF7, "hook_menu_start"),
                   (0x6F2D, 0x6F30, 0x7F97, "hook_menu_update"),
+                  (0x6F50, 0x6F53, 0x7FC6, "hook_gameover_start"),
                   (0x6F6E, 0x6F71, 0x7FFC, "hook_game_update")],
     },
 }

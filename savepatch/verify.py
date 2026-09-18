@@ -18,6 +18,10 @@ Runs seven checks against a stock ROM and its patched counterpart:
      line only when there is a valid save to continue from.
   6. Level-start resume - a load must not bring back a mid-stage
      checkpoint; resuming always begins the saved stage from its start.
+  8. Game over - reaching StateGameOver clears the save, because the
+     game only ever enters that state once every continue is spent (the
+     death path checks the counter first, and the other route zeroes it
+     on the instruction before). The continue screen must not clear it.
   7. VRAM timing - every tilemap write must land during vblank or with
      the display off. The PPU silently rejects VRAM writes while it is
      fetching pixels, and because the hook runs at the same point in
@@ -43,7 +47,7 @@ import patch as P
 
 # Everything ROM-specific is loaded from the matching profile in patch.py by
 # load_profile(); these are filled in before any check runs.
-CURRENT_STATE = MUNDO = LEVEL = VIDAS = CHECKPOINT = None
+CURRENT_STATE = MUNDO = LEVEL = VIDAS = CHECKPOINT = SETSTATE = None
 OFF_SPEC_A = OFF_SPEC_B = OFF_LEVEL = OFF_VIDAS = OFF_MUNDO = None
 PROFILE = None
 
@@ -65,7 +69,7 @@ MAX_ISOLATED_DIFFS = 8
 def load_profile(stock_rom):
     """Pull this ROM's addresses and payload offsets from its patch profile,
     so the harness checks the build it was actually given."""
-    global PROFILE, CURRENT_STATE, MUNDO, LEVEL, VIDAS, CHECKPOINT
+    global PROFILE, CURRENT_STATE, MUNDO, LEVEL, VIDAS, CHECKPOINT, SETSTATE
     global OFF_SPEC_A, OFF_SPEC_B, OFF_LEVEL, OFF_VIDAS, OFF_MUNDO
     md5 = hashlib.md5(open(stock_rom, "rb").read()).hexdigest()
     if md5 not in P.ROM_PROFILES:
@@ -75,6 +79,7 @@ def load_profile(stock_rom):
     MUNDO, LEVEL, VIDAS = c["MUNDO"], c["LEVEL"], c["VIDAS"]
     CURRENT_STATE = CURRENT_STATE_BY_ROM[md5]
     CHECKPOINT = CHECKPOINT_BY_ROM[md5]
+    SETSTATE = SETSTATE_BY_ROM[md5]
     offsets, n = {}, 0
     for addr, length in PROFILE["vars"]:
         for i in range(length):
@@ -99,6 +104,12 @@ CHECKPOINT_BY_ROM = {
     "89465cae204767aba57c342c67624bee": 0xC12F,
     "631a7113e6fb5fd0c876a2f19030007c": 0xC12B,
 }
+# ZGB's next_state / state_running, used to drive a state change directly.
+SETSTATE_BY_ROM = {
+    "89465cae204767aba57c342c67624bee": (0xCC52, 0xCC7F),
+    "631a7113e6fb5fd0c876a2f19030007c": (0xCC4E, 0xCC7B),
+}
+ST_CONTINUE, ST_GAMEOVER = 8, 2
 
 # A fixed input script, long enough to cover the intro, the title screen,
 # the tutorial page, the stage banner and a stretch of actual play.
@@ -337,6 +348,28 @@ def main():
         failures.append(
             f"{rate:.2%} of tilemap writes land while the PPU is fetching "
             f"pixels; they will be dropped on hardware")
+
+    print("8. a game over with no continues left clears the save")
+    open(patched + '.ram', 'wb').write(good)
+    for label, state, should_survive in (("continue screen", ST_CONTINUE, True),
+                                         ("game over", ST_GAMEOVER, False)):
+        open(patched + '.ram', 'wb').write(good)
+        pb = boot(patched)
+        to_title(pb)
+        pb.tick(30, True)
+        next_state, running = SETSTATE
+        pb.memory[running] = 0
+        pb.memory[next_state] = state
+        pb.tick(240, True)
+        d = read_sram(pb)
+        alive = bytes(d[0:5]) == b'HRMSV'
+        ok = alive == should_survive
+        print(f"   {label:<16} -> save {'kept' if alive else 'cleared'}"
+              f"   {'' if ok else '  <-- wrong'}")
+        if not ok:
+            failures.append(
+                f"entering {label} {'cleared' if not alive else 'kept'} the save")
+        pb.stop(save=False)
 
     print()
     if failures:
