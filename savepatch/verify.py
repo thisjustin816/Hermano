@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verification harness for the Hermano save patch (needs pyboy + pillow).
 
-Runs four checks against a stock ROM and its patched counterpart:
+Runs seven checks against a stock ROM and its patched counterpart:
 
   1. Rendering fidelity - with no save present the patched ROM must render
      essentially as the stock ROM does over a long run of identical input.
