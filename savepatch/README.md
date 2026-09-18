@@ -159,9 +159,13 @@ It is set in the game's own 3×5 proportional typeface, lifted pixel for pixel
 out of those very tiles — `C`, `E`, `T`, `I` and the colon are the game's own
 letterforms, and `B`, `O`, `N` and `U`, which the stock string does not
 contain, are drawn to match. Glyphs are 3px wide on a 4px pitch, alongside the
-1px-wide `:` and `I` the game itself uses. `O` is square-cornered like the
-stock `D` and `E` rather than rounded, and `N` takes four pixels' width because
-a diagonal cannot read across three.
+1px-wide `:` and `I` the game itself uses.
+
+The house rule, read off the stock letters, is that a corner pixel is dropped
+wherever a stroke curves — `C` cuts its two open corners, `D` and `R` cut the
+corners on their round side. `O` and `U` are 4px wide so they can follow it,
+since cutting both corners of a 3px row would leave a single pixel; `N` is 4px
+so its diagonal has somewhere to go.
 
 The stock line lives in background tiles `$8C`–`$93` (row 15, columns 6–13).
 Those are never modified. The prompt gets eight fresh tiles at `$89C0` — tile

@@ -356,22 +356,26 @@ magic:
 ; ---- a ninth tile holding just the background for the pause between
 ; ---- messages. C, E, T, I and the colon are the game's own letterforms,
 ; ---- lifted pixel for pixel out of those tiles; B, O, N and U are drawn
-; ---- to match, N taking four pixels' width because a diagonal does not
-; ---- read in three. Two bytes per row, low bitplane then high: the high
+; ---- to match. The house rule, read off the stock letters, is that a
+; ---- corner pixel is dropped wherever a stroke curves - C cuts its two
+; ---- open corners, D and R cut the corners on their round side. O and U
+; ---- are four pixels wide so they can follow it (cutting both corners of
+; ---- a 3px row would leave a single pixel), and N is four so its
+; ---- diagonal has somewhere to go. Two bytes per row, low bitplane then high: the high
 ; ---- plane is all ones throughout, so blank pixels read as colour 2 (the
 ; ---- line's background) and text pixels as colour 3 (black), exactly as
 ; ---- the stock tiles are drawn.
 line_tiles:
-; text width 38px, centred at x+13 within the 64px credits block
+; text width 40px, centred at x+12 within the 64px credits block
         db $00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF   ; tile 0
-        db $00,$FF,$00,$FF,$06,$FF,$05,$FF,$06,$FF,$05,$FF,$06,$FF,$00,$FF   ; tile 1
-        db $00,$FF,$00,$FF,$06,$FF,$48,$FF,$08,$FF,$48,$FF,$06,$FF,$00,$FF   ; tile 2
-        db $00,$FF,$00,$FF,$E9,$FF,$AD,$FF,$AB,$FF,$A9,$FF,$E9,$FF,$00,$FF   ; tile 3
+        db $00,$FF,$00,$FF,$0C,$FF,$0A,$FF,$0C,$FF,$0A,$FF,$0C,$FF,$00,$FF   ; tile 1
+        db $00,$FF,$00,$FF,$0C,$FF,$91,$FF,$11,$FF,$91,$FF,$0C,$FF,$00,$FF   ; tile 2
+        db $00,$FF,$00,$FF,$C9,$FF,$2D,$FF,$2B,$FF,$29,$FF,$C9,$FF,$00,$FF   ; tile 3
         db $00,$FF,$00,$FF,$75,$FF,$25,$FF,$25,$FF,$25,$FF,$25,$FF,$00,$FF   ; tile 4
-        db $00,$FF,$00,$FF,$2A,$FF,$AA,$FF,$6A,$FF,$2A,$FF,$2E,$FF,$00,$FF   ; tile 5
-        db $00,$FF,$00,$FF,$E0,$FF,$80,$FF,$C0,$FF,$80,$FF,$E0,$FF,$00,$FF   ; tile 6
+        db $00,$FF,$00,$FF,$29,$FF,$A9,$FF,$69,$FF,$29,$FF,$26,$FF,$00,$FF   ; tile 5
+        db $00,$FF,$00,$FF,$70,$FF,$40,$FF,$60,$FF,$40,$FF,$70,$FF,$00,$FF   ; tile 6
         db $00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF   ; tile 7
-        db $00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF   ; blank
+        db $00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF   ; blank, for the pause between messages
 
 ; ---- The progress block: the variables StateMenu's START initialises
 ; ---- for a new game, minus the checkpoint. That set is by construction
