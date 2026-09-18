@@ -138,10 +138,11 @@ def check_var_offsets(code, labels, consts):
         raise SystemExit(
             f"var_table holds {offset} bytes but PAYLOAD_LEN is {consts['PAYLOAD_LEN']}"
         )
-    if consts["LINE_BYTES"] != consts["LINE_TILES"] * 16:
+    # LINE_TILES tiles of text, plus one blank tile for the pause between them
+    if consts["LINE_BYTES"] != (consts["LINE_TILES"] + 1) * 16:
         raise SystemExit(
             f"LINE_BYTES is {consts['LINE_BYTES']} but LINE_TILES implies "
-            f"{consts['LINE_TILES'] * 16}"
+            f"{(consts['LINE_TILES'] + 1) * 16}"
         )
     tile_bytes = labels["var_table"] - labels["line_tiles"]
     if tile_bytes != consts["LINE_BYTES"]:

@@ -58,13 +58,22 @@ J_B           = $20             ; GBDK joypad bit for the B button
 ; 4 clear), so tile $9C lands at $89C0 - the start of 1600 bytes of VRAM
 ; that is zero on this screen and clear of every sprite tile it uses
 ; (those stop at $87FF).
-LINE_TILES    = 8
-LINE_BYTES    = 128             ; LINE_TILES * 16; patch.py checks these agree
+LINE_TILES    = 8               ; tilemap cells the line occupies
+LINE_BYTES    = 144             ; (LINE_TILES + 1) * 16; patch.py checks this
 LINE_VRAM     = $89C0           ; where tile $9C lives under signed addressing
 LINE_MAP      = $99E6           ; $9800 + 15*32 + 6 -> row 15, column 6
 LINE_FIRST    = $9C             ; first tile of "B:CONTINUE"
 ORIG_FIRST    = $8C             ; first tile of the stock "SELECT:CREDITS"
-BLINK_BIT     = $40             ; bit 6 of FRAME_TICK: flips every 64 frames
+BLANK_TILE    = LINE_FIRST+LINE_TILES   ; the line's plain background
+
+; The two messages swap on bit 6 of the frame counter, so each gets 64
+; frames, and the line is held blank for the first 8 of those. A real
+; cross-fade is not available: DMG has one background palette for the
+; whole screen, so fading this line would fade the entire title art. The
+; short gap is what makes the change read as deliberate rather than as
+; one string glitching into another.
+BLINK_BIT     = $40             ; which message
+BLINK_GAP     = $38             ; zero for the first 8 frames of each message
 
 ; ---- save block layout in cartridge SRAM ----
 SRAM_MAGIC    = $A000           ; 5 bytes
@@ -164,17 +173,25 @@ hook_menu_update:
         or a
         jr nz,hmu_keys          ; tutorial page showing - do not touch its map
         ld a,(FRAME_TICK)
+        and BLINK_GAP
+        jr z,hmu_blank          ; brief pause between the two messages
+        ld a,(FRAME_TICK)
         and BLINK_BIT
+        ld c,1                  ; each message is a run of consecutive tiles
         ld a,LINE_FIRST
         jr nz,hmu_draw          ; ld does not disturb the flags from AND
         ld a,ORIG_FIRST
+        jr hmu_draw
+hmu_blank:
+        ld c,0                  ; the one background tile, eight times over
+        ld a,BLANK_TILE
 hmu_draw:
         ld de,LINE_MAP
         ld b,LINE_TILES
 hmu_cell:
         ld (de),a
         inc de
-        inc a                   ; both runs of tiles are consecutive
+        add a,c
         dec b
         jr nz,hmu_cell
 hmu_keys:
@@ -335,21 +352,26 @@ magic:
         db "HRMSV"
 
 ; ---- "B:CONTINUE" set in the game's own 3x5 typeface, occupying the
-; ---- same eight tiles' worth of pixels as the stock credits line. Two
-; ---- bytes per row, low bitplane then high: the high plane is all ones
-; ---- throughout, so blank pixels read as colour 2 (the line's
-; ---- background) and text pixels as colour 3 (black), exactly as the
-; ---- stock tiles are drawn.
+; ---- same eight tiles' worth of pixels as the stock credits line, plus
+; ---- a ninth tile holding just the background for the pause between
+; ---- messages. C, E, T, I and the colon are the game's own letterforms,
+; ---- lifted pixel for pixel out of those tiles; B, O, N and U are drawn
+; ---- to match, N taking four pixels' width because a diagonal does not
+; ---- read in three. Two bytes per row, low bitplane then high: the high
+; ---- plane is all ones throughout, so blank pixels read as colour 2 (the
+; ---- line's background) and text pixels as colour 3 (black), exactly as
+; ---- the stock tiles are drawn.
 line_tiles:
-; text width 36px, centred at x+14 within the 64px credits block
+; text width 38px, centred at x+13 within the 64px credits block
         db $00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF   ; tile 0
-        db $00,$FF,$00,$FF,$03,$FF,$02,$FF,$03,$FF,$02,$FF,$03,$FF,$00,$FF   ; tile 1
-        db $00,$FF,$00,$FF,$03,$FF,$A4,$FF,$04,$FF,$A4,$FF,$03,$FF,$00,$FF   ; tile 2
-        db $00,$FF,$00,$FF,$25,$FF,$56,$FF,$55,$FF,$55,$FF,$25,$FF,$00,$FF   ; tile 3
+        db $00,$FF,$00,$FF,$06,$FF,$05,$FF,$06,$FF,$05,$FF,$06,$FF,$00,$FF   ; tile 1
+        db $00,$FF,$00,$FF,$06,$FF,$48,$FF,$08,$FF,$48,$FF,$06,$FF,$00,$FF   ; tile 2
+        db $00,$FF,$00,$FF,$E9,$FF,$AD,$FF,$AB,$FF,$A9,$FF,$E9,$FF,$00,$FF   ; tile 3
         db $00,$FF,$00,$FF,$75,$FF,$25,$FF,$25,$FF,$25,$FF,$25,$FF,$00,$FF   ; tile 4
-        db $00,$FF,$00,$FF,$55,$FF,$95,$FF,$55,$FF,$55,$FF,$5D,$FF,$00,$FF   ; tile 5
-        db $00,$FF,$00,$FF,$C0,$FF,$00,$FF,$80,$FF,$00,$FF,$C0,$FF,$00,$FF   ; tile 6
+        db $00,$FF,$00,$FF,$2A,$FF,$AA,$FF,$6A,$FF,$2A,$FF,$2E,$FF,$00,$FF   ; tile 5
+        db $00,$FF,$00,$FF,$E0,$FF,$80,$FF,$C0,$FF,$80,$FF,$E0,$FF,$00,$FF   ; tile 6
         db $00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF   ; tile 7
+        db $00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF   ; blank
 
 ; ---- The progress block: the variables StateMenu's START initialises
 ; ---- for a new game, minus the checkpoint. That set is by construction

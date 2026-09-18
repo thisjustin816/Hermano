@@ -39,10 +39,16 @@ original game data.
 | Title screen  | START    | Start a new game (unchanged)                  |
 | Title screen  | SELECT   | Credits (unchanged)                           |
 
-The title screen's bottom line alternates, about once a second, between the
-stock `SELECT:CREDITS` and **`B:CONTINUE`** — same typeface, same size, same
-position — but only when there is a valid save to continue from. With no save
-the line never changes and the screen is the stock artwork, untouched.
+The title screen's bottom line alternates between the stock `SELECT:CREDITS`
+and **`B:CONTINUE`** — same typeface, same size, same position — but only when
+there is a valid save to continue from. With no save the line never changes and
+the screen is the stock artwork, untouched.
+
+Each message holds for 56 frames (~0.9 s) with the line blank for 8 frames
+(~0.13 s) between them. The gap is deliberate: it makes the change read as an
+alternation rather than as one string glitching into another. A cross-fade is
+not an option — the DMG has a single background palette for the whole screen,
+so fading this line would fade the entire title illustration with it.
 
 ### Starting a new game over an existing save
 
@@ -101,7 +107,7 @@ The patch overwrites **no original code or data**. Its entire footprint is:
 |-------------------|------|---------------------------------------------------|
 | `$0147`, `$0149`  | 2    | cartridge type → MBC5+RAM+BATTERY, 8 KB of SRAM   |
 | `$014D`–`$014F`   | 3    | recomputed header and global checksums            |
-| `$3500`–`$36CA`   | 459  | injected code and tiles, into what was `$FF` padding |
+| `$3500`–`$36E9`   | 490  | injected code and tiles, into what was `$FF` padding |
 | `$6F25`, `$6F28`  | 2    | `startFuncs[StateMenu]` → `hook_menu_start`       |
 | `$6F2D`, `$6F30`  | 2    | `updateFuncs[StateMenu]` → `hook_menu_update`     |
 | `$6F6E`, `$6F71`  | 2    | `updateFuncs[StateGame]` → `hook_game_update`     |
@@ -150,24 +156,28 @@ the prompt shares the line that already reads `SELECT:CREDITS`, alternating
 with it every 64 frames.
 
 It is set in the game's own 3×5 proportional typeface, lifted pixel for pixel
-out of those very tiles — `C`, `E`, `T` and `I` are the game's own letterforms,
-and `B`, `O`, `N` and `U`, which the stock string does not contain, are drawn
-to match. Glyphs are 3px wide on a 4px pitch, with the 1px-wide `:` and `I`
-the game itself uses.
+out of those very tiles — `C`, `E`, `T`, `I` and the colon are the game's own
+letterforms, and `B`, `O`, `N` and `U`, which the stock string does not
+contain, are drawn to match. Glyphs are 3px wide on a 4px pitch, alongside the
+1px-wide `:` and `I` the game itself uses. `O` is square-cornered like the
+stock `D` and `E` rather than rounded, and `N` takes four pixels' width because
+a diagonal cannot read across three.
 
 The stock line lives in background tiles `$8C`–`$93` (row 15, columns 6–13).
 Those are never modified. The prompt gets eight fresh tiles at `$89C0` — tile
 `$9C` under the screen's signed BG addressing, at the start of 1600 bytes of
 VRAM that is zero here and clear of every sprite tile the screen uses (those
-stop at `$87FF`). Alternating is then just eight tilemap bytes, so the original
-art survives intact and switching back is exact.
+stop at `$87FF`) — plus a ninth holding just the line's background, for the
+pause between messages. Alternating is then just eight tilemap bytes, so the
+original art survives intact and switching back is exact.
 
 The tile data is written by `hook_menu_start`, where `main()` holds the display
 off for the whole state START path and `Start_StateMenu` never touches LCDC —
 so it needs no vblank timing games. Only the tilemap is touched per frame, and
 only while the title art is up: the tutorial page reuses `StateMenu` and
 redraws the whole background, so it is left alone. Measured over 900 frames,
-the line is always fully one string or fully the other — never a mix.
+the line is always fully one string, fully the other, or fully blank — never a
+mix.
 
 Detecting "has the run changed" would normally want a byte of scratch RAM,
 which there is no safe place for. Instead the hook compares against the copy
