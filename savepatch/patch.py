@@ -31,31 +31,64 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CODE_ORG = 0x3500
 CODE_LIMIT = 0x4000
 
-# Stock ROM fingerprint, for a clear error when fed a different dump.
-STOCK_MD5 = "89465cae204767aba57c342c67624bee"
-STOCK_SIZE = 512 * 1024
+ROM_SIZE = 512 * 1024
 
-# InitStates builds ZGB's state function tables in WRAM at runtime with a
-# sequence of `ld hl,<slot>` / `ld (hl),<lo>` / `inc hl` / `ld (hl),<hi>`.
-# Rewriting those immediates repoints a single state at one of our hooks
-# and leaves every other dispatch, and all engine code, untouched.
+# Everything that differs between releases lives here. Both are the same ZGB
+# build pipeline and the same title screen, so the injected code is identical;
+# only the engine globals, two stock entry points and the progress block move.
 #
-# Each entry: (lo immediate offset, hi immediate offset, stock target, hook)
-TABLE_HOOKS = [
-    (0x6F25, 0x6F28, 0x7EF7, "hook_menu_start"),   # startFuncs[StateMenu]
-    (0x6F2D, 0x6F30, 0x7FA6, "hook_menu_update"),  # updateFuncs[StateMenu]
-    (0x6F6E, 0x6F71, 0x7FFC, "hook_game_update"),  # updateFuncs[StateGame]
-]
-
-# Payload offsets the assembly hard-codes for its change detection; these
-# are re-derived from var_table below and must agree.
-EXPECTED_VAR_OFFSETS = {
-    "SRAM_SPEC_A": 0xC110,
-    "SRAM_SPEC_B": 0xC118,
-    "SRAM_LEVEL": 0xC11C,
-    "SRAM_VIDAS": 0xC11E,
-    "SRAM_MUNDO": 0xC126,
+#   consts   assembly constants emitted ahead of savepatch.asm
+#   vars     the progress block, as {address, length} runs. This is the set
+#            StateMenu's START initialises for a new game, minus the music
+#            fade counter (an engine global that shares the region) and minus
+#            the checkpoint coordinates, which are left out so a restored run
+#            always starts its stage from the beginning.
+#   roles    which address inside `vars` each named payload offset refers to;
+#            the offsets are derived, so they cannot drift out of step.
+#   hooks    (lo immediate, hi immediate, stock target, label) for the three
+#            InitStates entries that get repointed.
+ROM_PROFILES = {
+    "89465cae204767aba57c342c67624bee": {
+        "name": "Hermano (original release)",
+        "consts": {
+            "KEYS": 0xCCCB, "PREV_KEYS": 0xCCCA, "TUTORIAL": 0xCC11,
+            "FRAME_TICK": 0xC0A3,
+            "LEVEL": 0xC11C, "VIDAS": 0xC11E, "MUNDO": 0xC126,
+            "SETSTATE": 0x0AB0,
+            "MENU_START": 0x7EF7, "MENU_UPDATE": 0x7FA6, "GAME_UPDATE": 0x7FFC,
+            "MAX_WORLD": 6, "MAX_STAGE": 2, "MAX_SPEC_B": 3, "MAX_SPEC_A": 7,
+        },
+        "vars": [(0xC10E, 1), (0xC110, 1), (0xC113, 13), (0xC122, 1),
+                 (0xC126, 1), (0xC135, 2)],
+        "roles": {"SRAM_SPEC_A": 0xC110, "SRAM_SPEC_B": 0xC118,
+                  "SRAM_LEVEL": 0xC11C, "SRAM_VIDAS": 0xC11E,
+                  "SRAM_MUNDO": 0xC126},
+        "hooks": [(0x6F25, 0x6F28, 0x7EF7, "hook_menu_start"),
+                  (0x6F2D, 0x6F30, 0x7FA6, "hook_menu_update"),
+                  (0x6F6E, 0x6F71, 0x7FFC, "hook_game_update")],
+    },
+    "631a7113e6fb5fd0c876a2f19030007c": {
+        "name": "Hermano World (ModRetro Chromatic, SGB enhanced)",
+        "consts": {
+            "KEYS": 0xCCC7, "PREV_KEYS": 0xCCC6, "TUTORIAL": 0xCC0D,
+            "FRAME_TICK": 0xC0A3,
+            "LEVEL": 0xC118, "VIDAS": 0xC11A, "MUNDO": 0xC122,
+            "SETSTATE": 0x0AB0,
+            "MENU_START": 0x7EF7, "MENU_UPDATE": 0x7F97, "GAME_UPDATE": 0x7FFC,
+            "MAX_WORLD": 6, "MAX_STAGE": 2, "MAX_SPEC_B": 3, "MAX_SPEC_A": 7,
+        },
+        "vars": [(0xC10D, 1), (0xC10F, 1), (0xC112, 5), (0xC117, 5),
+                 (0xC11E, 1), (0xC122, 1), (0xC131, 2)],
+        "roles": {"SRAM_SPEC_A": 0xC10F, "SRAM_SPEC_B": 0xC117,
+                  "SRAM_LEVEL": 0xC118, "SRAM_VIDAS": 0xC11A,
+                  "SRAM_MUNDO": 0xC122},
+        "hooks": [(0x6F25, 0x6F28, 0x7EF7, "hook_menu_start"),
+                  (0x6F2D, 0x6F30, 0x7F97, "hook_menu_update"),
+                  (0x6F6E, 0x6F71, 0x7FFC, "hook_game_update")],
+    },
 }
+
+SRAM_DATA = 0xA008       # must match savepatch.asm
 
 # Cartridge header fields.
 OFF_CART_TYPE = 0x147
@@ -117,55 +150,70 @@ def make_ips(original, patched):
     return bytes(out)
 
 
-def check_var_offsets(code, labels, consts):
-    """Re-derive each variable's payload offset from var_table in the ROM
-    image and confirm the constants the assembly compares against match.
+def build_preamble(profile):
+    """Emit the assembly constants and progress block for one ROM.
 
-    The change-detection in hook_game_update reads three fixed SRAM
-    addresses. If var_table is ever reordered those constants silently
-    start pointing at the wrong bytes, so tie them together here.
+    The payload offsets are derived from the same `vars` list that becomes
+    var_table, so a reordered progress block cannot leave the range checks
+    and the change detection pointing at the wrong bytes.
     """
-    table = labels["var_table"] - CODE_ORG
-    offset, derived = 0, {}
-    while True:
-        lo, hi, length = code[table], code[table + 1], code[table + 2]
-        if length == 0:
-            break
-        base = (hi << 8) | lo
+    offsets, n = {}, 0
+    for addr, length in profile["vars"]:
         for i in range(length):
-            derived[base + i] = offset + i
-        offset += length
-        table += 3
-    if offset != consts["PAYLOAD_LEN"]:
-        raise SystemExit(
-            f"var_table holds {offset} bytes but PAYLOAD_LEN is {consts['PAYLOAD_LEN']}"
-        )
+            offsets[addr + i] = n + i
+        n += length
+
+    out = [f"; ==== generated from the ROM profile: {profile['name']} ====",
+           f"PAYLOAD_LEN   = {n}"]
+    for name, value in profile["consts"].items():
+        out.append(f"{name:<13} = ${value:04X}")
+    for name, addr in profile["roles"].items():
+        if addr not in offsets:
+            raise SystemExit(
+                f"{name} refers to {addr:#06x}, which the progress block does "
+                f"not cover")
+        out.append(f"{name:<13} = ${SRAM_DATA + offsets[addr]:04X}   "
+                   f"; {addr:#06x}, payload byte {offsets[addr]}")
+    out.append("var_table:")
+    for addr, length in profile["vars"]:
+        out.append(f"        db ${addr & 0xFF:02X},${addr >> 8:02X},{length}"
+                   f"   ; {addr:#06x}-{addr + length - 1:#06x}")
+    out.append("        db 0,0,0                ; terminator")
+    return "\n".join(out) + "\n\n"
+
+
+def check_var_offsets(code, labels, consts):
+    """Sanity-check the prompt's tile data against the constants using it."""
     # LINE_TILES tiles of text, plus one blank tile for the pause between them
     if consts["LINE_BYTES"] != (consts["LINE_TILES"] + 1) * 16:
         raise SystemExit(
             f"LINE_BYTES is {consts['LINE_BYTES']} but LINE_TILES implies "
             f"{(consts['LINE_TILES'] + 1) * 16}"
         )
-    tile_bytes = labels["var_table"] - labels["line_tiles"]
+    tile_bytes = labels["line_tiles_end"] - labels["line_tiles"]
     if tile_bytes != consts["LINE_BYTES"]:
         raise SystemExit(
             f"line_tiles holds {tile_bytes} bytes but LINE_BYTES is "
             f"{consts['LINE_BYTES']}"
         )
-    for name, addr in EXPECTED_VAR_OFFSETS.items():
-        want = consts["SRAM_DATA"] + derived[addr]
-        if consts[name] != want:
-            raise SystemExit(
-                f"{name} is {consts[name]:#06x} but var_table puts {addr:#06x} "
-                f"at {want:#06x} - fix the constant or the table"
-            )
 
 
 def patch(rom_bytes, verbose=True):
     rom = bytearray(rom_bytes)
 
-    if len(rom) != STOCK_SIZE:
-        raise SystemExit(f"expected a {STOCK_SIZE}-byte ROM, got {len(rom)}")
+    md5 = hashlib.md5(rom_bytes).hexdigest()
+    profile = ROM_PROFILES.get(md5)
+    if profile is None:
+        known = "\n".join(f"  {m}  {p['name']}" for m, p in ROM_PROFILES.items())
+        raise SystemExit(
+            f"unrecognised ROM (md5 {md5}).\n"
+            f"Every address this patch uses was recovered from a specific "
+            f"build, so it cannot be applied blind. Known ROMs:\n{known}")
+    if verbose:
+        print(f"ROM: {profile['name']}")
+
+    if len(rom) != ROM_SIZE:
+        raise SystemExit(f"expected a {ROM_SIZE}-byte ROM, got {len(rom)}")
     if rom[OFF_CART_TYPE] == CART_MBC5_RAM_BATTERY:
         raise SystemExit("this ROM already has SRAM enabled - already patched?")
     if rom[OFF_CART_TYPE] != CART_MBC5:
@@ -176,7 +224,7 @@ def patch(rom_bytes, verbose=True):
 
     # --- 1. assemble the injected code -----------------------------------
     with open(os.path.join(HERE, "savepatch.asm")) as f:
-        source = f.read()
+        source = build_preamble(profile) + f.read()
     code, labels, consts = asm.assemble(source, org=CODE_ORG)
     check_var_offsets(code, labels, consts)
 
@@ -194,7 +242,7 @@ def patch(rom_bytes, verbose=True):
               f"({CODE_LIMIT - end} bytes of bank 0 padding left)")
 
     # --- 2. repoint the two state update functions at our hooks ----------
-    for lo_off, hi_off, stock_target, label in TABLE_HOOKS:
+    for lo_off, hi_off, stock_target, label in profile["hooks"]:
         stock_lo, stock_hi = stock_target & 0xFF, stock_target >> 8
         if (rom[lo_off], rom[hi_off]) != (stock_lo, stock_hi):
             raise SystemExit(
@@ -232,11 +280,6 @@ def main():
     args = ap.parse_args()
 
     original = open(args.rom, "rb").read()
-    md5 = hashlib.md5(original).hexdigest()
-    if md5 != STOCK_MD5:
-        print(f"warning: input md5 {md5} does not match the known release "
-              f"({STOCK_MD5}); continuing anyway", file=sys.stderr)
-
     patched = patch(original)
 
     out = args.output or os.path.splitext(args.rom)[0] + "-save.gb"

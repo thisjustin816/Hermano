@@ -3,7 +3,7 @@
 Adds a battery-backed save to the released *Hermano* ROM. The game autosaves
 your progress as you play; pressing **B** on the title screen resumes from it.
 
-The released cartridge has nowhere to save — its header declares
+Both released cartridges have nowhere to save — their headers declare
 `MBC5` with **no RAM and no battery**:
 
 | Header byte | Stock | Meaning          |
@@ -13,6 +13,25 @@ The released cartridge has nowhere to save — its header declares
 
 So the patch has to give the cartridge a RAM chip first, then add code that
 uses it.
+
+## Supported releases
+
+| Release | md5 | Payload |
+|---------|-----|---------|
+| Hermano (original) | `89465cae204767aba57c342c67624bee` | 19 bytes |
+| Hermano World (ModRetro Chromatic, SGB enhanced) | `631a7113e6fb5fd0c876a2f19030007c` | 16 bytes |
+
+Both come off the same ZGB build and draw the same title screen, so the
+injected code is identical; what differs is where the engine globals and the
+progress block sit, and two stock entry points. All of that lives in
+`ROM_PROFILES` in `patch.py`, keyed by md5, and the payload offsets are derived
+from each profile's progress block rather than written out twice.
+
+`patch.py` refuses a ROM it has no profile for rather than applying addresses
+recovered from a different build.
+
+Adding another release means recovering its addresses and adding one profile —
+no change to the assembly.
 
 ## Using it
 

@@ -41,28 +41,64 @@ sys.path.insert(0, HERE)
 import asm
 import patch as P
 
-CURRENT_STATE = 0xC188
-MUNDO, LEVEL, VIDAS = 0xC126, 0xC11C, 0xC11E
+# Everything ROM-specific is loaded from the matching profile in patch.py by
+# load_profile(); these are filled in before any check runs.
+CURRENT_STATE = MUNDO = LEVEL = VIDAS = CHECKPOINT = None
+OFF_SPEC_A = OFF_SPEC_B = OFF_LEVEL = OFF_VIDAS = OFF_MUNDO = None
+PROFILE = None
+
 ST_MENU, ST_TITULO, ST_GAME = 0, 1, 3
+SRAM_DATA = 8            # payload start, relative to $A000
 
 # The continue prompt shares the bottom line with "SELECT:CREDITS",
 # alternating with it. This is the first tilemap cell of that line and the
-# tile index it carries while the prompt is the one showing.
+# tile index it carries while the prompt is the one showing. Both releases
+# draw the same title screen, so these do not vary.
 PROMPT_MAP, PROMPT_FIRST = 0x99E6, 0x9C
-
-# x_checkpoint/y_checkpoint, which a load must NOT restore - resuming always
-# starts at the beginning of the saved stage.
-CHECKPOINT = 0xC12F
 
 # hook_menu_start runs on the state START path, so entering the title screen
 # can shift the raster phase for a single frame. Isolated frames are fine;
 # sustained divergence is not.
 MAX_ISOLATED_DIFFS = 8
 
-# Payload offsets within the SRAM block (see savepatch.asm's var_table).
-SRAM_DATA = 8
-OFF_SPEC_A, OFF_SPEC_B = 1, 7
-OFF_LEVEL, OFF_VIDAS, OFF_MUNDO = 11, 13, 16
+
+def load_profile(stock_rom):
+    """Pull this ROM's addresses and payload offsets from its patch profile,
+    so the harness checks the build it was actually given."""
+    global PROFILE, CURRENT_STATE, MUNDO, LEVEL, VIDAS, CHECKPOINT
+    global OFF_SPEC_A, OFF_SPEC_B, OFF_LEVEL, OFF_VIDAS, OFF_MUNDO
+    md5 = hashlib.md5(open(stock_rom, "rb").read()).hexdigest()
+    if md5 not in P.ROM_PROFILES:
+        raise SystemExit(f"no patch profile for {stock_rom} (md5 {md5})")
+    PROFILE = P.ROM_PROFILES[md5]
+    c = PROFILE["consts"]
+    MUNDO, LEVEL, VIDAS = c["MUNDO"], c["LEVEL"], c["VIDAS"]
+    CURRENT_STATE = CURRENT_STATE_BY_ROM[md5]
+    CHECKPOINT = CHECKPOINT_BY_ROM[md5]
+    offsets, n = {}, 0
+    for addr, length in PROFILE["vars"]:
+        for i in range(length):
+            offsets[addr + i] = n + i
+        n += length
+    r = PROFILE["roles"]
+    OFF_SPEC_A = offsets[r["SRAM_SPEC_A"]]
+    OFF_SPEC_B = offsets[r["SRAM_SPEC_B"]]
+    OFF_LEVEL = offsets[r["SRAM_LEVEL"]]
+    OFF_VIDAS = offsets[r["SRAM_VIDAS"]]
+    OFF_MUNDO = offsets[r["SRAM_MUNDO"]]
+    return PROFILE
+
+
+# ZGB's current_state and the checkpoint coordinates are not needed by the
+# patch itself, so they are not in its profiles - but the harness reads both.
+CURRENT_STATE_BY_ROM = {
+    "89465cae204767aba57c342c67624bee": 0xC188,
+    "631a7113e6fb5fd0c876a2f19030007c": 0xC184,
+}
+CHECKPOINT_BY_ROM = {
+    "89465cae204767aba57c342c67624bee": 0xC12F,
+    "631a7113e6fb5fd0c876a2f19030007c": 0xC12B,
+}
 
 # A fixed input script, long enough to cover the intro, the title screen,
 # the tutorial page, the stage banner and a stretch of actual play.
@@ -153,6 +189,7 @@ def main():
         raise SystemExit(__doc__)
     stock, patched = sys.argv[1], sys.argv[2]
     failures = []
+    print(f"profile: {load_profile(stock)['name']}\n")
 
     print("1. rendering fidelity vs stock (no save present)")
     clear_saves(patched)
@@ -246,7 +283,7 @@ def main():
     def resum(blob, off, value):
         b = bytearray(blob)
         b[SRAM_DATA + off] = value
-        b[7] = sum(b[SRAM_DATA:SRAM_DATA + 19]) & 0xFF
+        b[7] = sum(b[SRAM_DATA:SRAM_DATA + b[6]]) & 0xFF
         return bytes(b)
     cases['world 7 (past the last)'] = resum(good, OFF_MUNDO, 7)
     cases['world 200'] = resum(good, OFF_MUNDO, 200)
@@ -273,7 +310,8 @@ def main():
 
     print("7. tilemap writes land where the PPU allows them")
     code, labels, _ = asm.assemble(
-        open(os.path.join(HERE, "savepatch.asm")).read(), org=P.CODE_ORG)
+        P.build_preamble(PROFILE) + open(os.path.join(HERE, "savepatch.asm")).read(),
+        org=P.CODE_ORG)
     pb = boot(patched)
     to_title(pb)
     pb.tick(30, True)

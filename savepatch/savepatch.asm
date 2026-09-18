@@ -27,18 +27,10 @@
 ; title screen, under the fade-in.
 ; =====================================================================
 
-; ---- engine globals (recovered from the ROM) ----
-KEYS          = $CCCB           ; ZGB keys        (this frame)
-PREV_KEYS     = $CCCA           ; ZGB previous_keys
-TUTORIAL      = $CC11           ; StateMenu: 0 = title art, 1 = tutorial page
-FRAME_TICK    = $C0A3           ; free-running, +1 per frame; read-only here
-LEVEL         = $C11C           ; stage within the world, 0-based
-VIDAS         = $C11E           ; lives, as shown on the stage banner
-MUNDO         = $C126           ; world, 0-based
-SETSTATE      = $0AB0           ; void SetState(UINT8 state) - arg in A
-MENU_START    = $7EF7           ; stock Start_StateMenu,  in ROM bank $07
-MENU_UPDATE   = $7FA6           ; stock Update_StateMenu, in ROM bank $07
-GAME_UPDATE   = $7FFC           ; stock Update_StateGame, in ROM bank $1C
+; Everything this file needs that differs between releases - the engine
+; globals, the stock function addresses, the progress block and its
+; bounds - is emitted ahead of it by patch.py from the matching ROM
+; profile. See ROM_PROFILES there.
 
 ST_TITULO     = 1               ; StateTituloNivel - the "STAGE x-y" banner
 
@@ -89,29 +81,11 @@ SRAM_VER      = $A005
 SRAM_LEN      = $A006
 SRAM_SUM      = $A007
 SRAM_DATA     = $A008
-PAYLOAD_LEN   = 19
-SAVE_VERSION  = 2               ; v1 stored the checkpoint too; see var_table
+SAVE_VERSION  = 2               ; v1 stored the checkpoint as well
 
-; Offsets of individual variables inside the payload. They follow from
-; var_table at the bottom of this file; patch.py re-derives them from
-; that table and refuses to build if these disagree.
-SRAM_SPEC_A   = SRAM_DATA+1     ; $C110
-SRAM_SPEC_B   = SRAM_DATA+7     ; $C118
-SRAM_LEVEL    = SRAM_DATA+11    ; $C11C
-SRAM_VIDAS    = SRAM_DATA+13    ; $C11E
-SRAM_MUNDO    = SRAM_DATA+16    ; $C126
-
-; A restored run has to name a stage the game can actually load.
-; StateGame's START looks the stage up in a 22-entry table (bank $1C,
-; $7F8E) indexed by world*3 + stage, or by 15 or 19 plus one of the two
-; special-stage selectors. Past the end of that table it loads garbage -
-; a real, if unreachable, world 7 renders as corrupt tiles - so a save
-; carrying an out-of-range value is treated as no save at all rather than
-; resumed into a broken level.
-MAX_WORLD     = 6               ; the ending fires when the world reaches 6
-MAX_STAGE     = 2               ; three stages per world
-MAX_SPEC_B    = 3               ; index 19 + (n-1) must stay within 21
-MAX_SPEC_A    = 7               ; index 15 + (n-1) must stay within 21
+; PAYLOAD_LEN, the SRAM_* payload offsets and the MAX_* bounds all come
+; from the ROM profile, so the offsets cannot drift out of step with the
+; progress block they index into.
 
 ; =====================================================================
 ; Hook A - installed as updateFuncs[StateGame].
@@ -446,23 +420,4 @@ line_tiles:
         db $00,$FF,$00,$FF,$70,$FF,$40,$FF,$60,$FF,$40,$FF,$70,$FF,$00,$FF   ; tile 6
         db $00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF   ; tile 7
         db $00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF   ; blank, for the pause between messages
-
-; ---- The progress block: the variables StateMenu's START initialises
-; ---- for a new game, minus the checkpoint. That set is by construction
-; ---- the complete definition of a run, and engine globals sharing the
-; ---- region (the music fade counter at $C10F in particular) are
-; ---- excluded.
-; ----
-; ---- x_checkpoint/y_checkpoint ($C12F-$C132) are deliberately NOT
-; ---- saved. StateGame's START spawns the player at the stage's default
-; ---- entry point when they are zero, and StateMenu's START has already
-; ---- zeroed them by the time a load runs - so restoring always resumes
-; ---- at the beginning of the saved stage rather than mid-stage.
-var_table:
-        db $0E,$C1,1            ; $C10E
-        db $10,$C1,1            ; $C110
-        db $13,$C1,13           ; $C113-$C11F  (includes level $C11C, lives $C11E)
-        db $22,$C1,1            ; $C122
-        db $26,$C1,1            ; $C126        (world)
-        db $35,$C1,2            ; $C135-$C136
-        db 0,0,0                ; terminator
+line_tiles_end:
