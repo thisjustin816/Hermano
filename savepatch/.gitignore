@@ -1,0 +1,9 @@
+# Never commit the game itself - only the patch that modifies it.
+*.gb
+*.gbc
+# Emulator save files
+*.ram
+*.srm
+*.sav
+*.state
+__pycache__/
