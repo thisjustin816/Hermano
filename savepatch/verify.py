@@ -61,6 +61,7 @@ MAX_ISOLATED_DIFFS = 8
 
 # Payload offsets within the SRAM block (see savepatch.asm's var_table).
 SRAM_DATA = 8
+OFF_SPEC_A, OFF_SPEC_B = 1, 7
 OFF_LEVEL, OFF_VIDAS, OFF_MUNDO = 11, 13, 16
 
 # A fixed input script, long enough to cover the intro, the title screen,
@@ -238,6 +239,20 @@ def main():
         'wrong version': good[:5] + bytes([0x7F]) + good[6:],
         'wrong length': good[:6] + bytes([0x02]) + good[7:],
     }
+    # A block can be perfectly intact and still name a stage that does not
+    # exist - world 7 indexes past the end of the game's 22-entry stage
+    # table and renders as garbage. Those must be refused too, which means
+    # re-checksumming so only the range check can reject them.
+    def resum(blob, off, value):
+        b = bytearray(blob)
+        b[SRAM_DATA + off] = value
+        b[7] = sum(b[SRAM_DATA:SRAM_DATA + 19]) & 0xFF
+        return bytes(b)
+    cases['world 7 (past the last)'] = resum(good, OFF_MUNDO, 7)
+    cases['world 200'] = resum(good, OFF_MUNDO, 200)
+    cases['stage 9'] = resum(good, OFF_LEVEL, 9)
+    cases['special stage 99'] = resum(good, OFF_SPEC_B, 99)
+    cases['underworld 99'] = resum(good, OFF_SPEC_A, 99)
     for name, blob in cases.items():
         open(patched + '.ram', 'wb').write(blob)
         pb = boot(patched)

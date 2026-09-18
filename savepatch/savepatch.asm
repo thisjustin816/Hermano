@@ -95,9 +95,23 @@ SAVE_VERSION  = 2               ; v1 stored the checkpoint too; see var_table
 ; Offsets of individual variables inside the payload. They follow from
 ; var_table at the bottom of this file; patch.py re-derives them from
 ; that table and refuses to build if these disagree.
-SRAM_LEVEL    = SRAM_DATA+11
-SRAM_VIDAS    = SRAM_DATA+13
-SRAM_MUNDO    = SRAM_DATA+16
+SRAM_SPEC_A   = SRAM_DATA+1     ; $C110
+SRAM_SPEC_B   = SRAM_DATA+7     ; $C118
+SRAM_LEVEL    = SRAM_DATA+11    ; $C11C
+SRAM_VIDAS    = SRAM_DATA+13    ; $C11E
+SRAM_MUNDO    = SRAM_DATA+16    ; $C126
+
+; A restored run has to name a stage the game can actually load.
+; StateGame's START looks the stage up in a 22-entry table (bank $1C,
+; $7F8E) indexed by world*3 + stage, or by 15 or 19 plus one of the two
+; special-stage selectors. Past the end of that table it loads garbage -
+; a real, if unreachable, world 7 renders as corrupt tiles - so a save
+; carrying an out-of-range value is treated as no save at all rather than
+; resumed into a broken level.
+MAX_WORLD     = 6               ; the ending fires when the world reaches 6
+MAX_STAGE     = 2               ; three stages per world
+MAX_SPEC_B    = 3               ; index 19 + (n-1) must stay within 21
+MAX_SPEC_A    = 7               ; index 15 + (n-1) must stay within 21
 
 ; =====================================================================
 ; Hook A - installed as updateFuncs[StateGame].
@@ -297,7 +311,31 @@ sv_magic:
         ret nz
         call checksum
         ld hl,SRAM_SUM
-        cp (hl)                 ; Z set here means the checksum agrees
+        cp (hl)
+        ret nz                  ; checksum disagrees
+        ; fall through: the checksum only proves the block is intact, not
+        ; that it describes a stage this game has
+
+; Returns Z if the stored run names a loadable stage. Assumes SRAM is
+; open. Clobbers A.
+bounds_ok:
+        ld a,(SRAM_MUNDO)
+        cp MAX_WORLD+1
+        jr nc,bo_bad
+        ld a,(SRAM_LEVEL)
+        cp MAX_STAGE+1
+        jr nc,bo_bad
+        ld a,(SRAM_SPEC_B)
+        cp MAX_SPEC_B+1
+        jr nc,bo_bad
+        ld a,(SRAM_SPEC_A)
+        cp MAX_SPEC_A+1
+        jr nc,bo_bad
+        xor a                   ; Z: every value is in range
+        ret
+bo_bad:
+        ld a,$FF
+        or a                    ; NZ: refuse the save
         ret
 
 ; =====================================================================

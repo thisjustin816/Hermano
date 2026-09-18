@@ -50,6 +50,8 @@ TABLE_HOOKS = [
 # Payload offsets the assembly hard-codes for its change detection; these
 # are re-derived from var_table below and must agree.
 EXPECTED_VAR_OFFSETS = {
+    "SRAM_SPEC_A": 0xC110,
+    "SRAM_SPEC_B": 0xC118,
     "SRAM_LEVEL": 0xC11C,
     "SRAM_VIDAS": 0xC11E,
     "SRAM_MUNDO": 0xC126,

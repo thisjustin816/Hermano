@@ -50,6 +50,15 @@ alternation rather than as one string glitching into another. A cross-fade is
 not an option — the DMG has a single background palette for the whole screen,
 so fading this line would fade the entire title illustration with it.
 
+### Finishing the game
+
+Beating the final stage runs the ending cutscene (~24 s), the credits (~80 s)
+and a closing screen, then returns to the title — about 113 seconds in all.
+None of that is gameplay, and the autosave only fires from `StateGame`, so the
+save is untouched: it still names the last stage you played. `B:CONTINUE` comes
+back up and drops you at the start of the final stage, so the ending can be
+replayed. Nothing unlocks, and there is no new game plus.
+
 ### Starting a new game over an existing save
 
 Pressing START does **not** immediately destroy the save. It survives the title
@@ -99,6 +108,23 @@ so a blank or corrupted chip leaves the game untouched. Cartridge RAM is kept
 disabled except during the brief save and load, so a crash or a stray write
 cannot damage the block.
 
+A checksum only proves the block is intact, not that it describes a stage this
+game has, so the stored run is range-checked as well:
+
+| Field | Max | Why |
+|-------|-----|-----|
+| world (`$C126`) | 6 | the ending fires when the world reaches 6 |
+| stage (`$C11C`) | 2 | three stages per world |
+| special stage (`$C118`) | 3 | its index is `19 + (n-1)` |
+| underworld (`$C110`) | 7 | its index is `15 + (n-1)` |
+
+`StateGame`'s START looks a stage up in a 22-entry table (bank `$1C`, `$7F8E`),
+indexed by `world * 3 + stage` or by 15 or 19 plus one of the special-stage
+selectors. Past the end of it the game loads garbage — world 7 exists as far as
+the code is concerned and renders as corrupt tiles. No normal play reaches it,
+since the ending triggers at world 6, but a save naming one is treated as no
+save at all: no prompt, and B does nothing.
+
 ## How it hooks in
 
 The patch overwrites **no original code or data**. Its entire footprint is:
@@ -107,7 +133,7 @@ The patch overwrites **no original code or data**. Its entire footprint is:
 |-------------------|------|---------------------------------------------------|
 | `$0147`, `$0149`  | 2    | cartridge type → MBC5+RAM+BATTERY, 8 KB of SRAM   |
 | `$014D`–`$014F`   | 3    | recomputed header and global checksums            |
-| `$3500`–`$36FD`   | 510  | injected code and tiles, into what was `$FF` padding |
+| `$3500`–`$371F`   | 544  | injected code and tiles, into what was `$FF` padding |
 | `$6F25`, `$6F28`  | 2    | `startFuncs[StateMenu]` → `hook_menu_start`       |
 | `$6F2D`, `$6F30`  | 2    | `updateFuncs[StateMenu]` → `hook_menu_update`     |
 | `$6F6E`, `$6F71`  | 2    | `updateFuncs[StateGame]` → `hook_game_update`     |
