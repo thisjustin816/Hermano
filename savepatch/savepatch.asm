@@ -9,56 +9,62 @@
 ; the state function table that ZGB's InitStates builds in WRAM are
 ; repointed at wrappers here:
 ;
-;   startFuncs[StateMenu]  -> hook_menu_start    (title screen: prompt)
-;   updateFuncs[StateMenu] -> hook_menu_update   (title screen: B loads)
+;   startFuncs[StateMenu]  -> hook_menu_start    (title: build the prompt)
+;   updateFuncs[StateMenu] -> hook_menu_update   (title: show it, B loads)
 ;   updateFuncs[StateGame] -> hook_game_update   (gameplay: autosave)
 ;
 ; Each wrapper calls the stock function first - the dispatcher has
 ; already paged in that state's bank, so a plain call reaches it - and
 ; then adds its own behaviour.
 ;
-; The two hooks that run during play sit on the update dispatch rather
-; than the state START dispatch, deliberately. The update loop is
-; vblank-synchronised, so extra work there is absorbed; the START path
-; runs with the display off and ends in DISPLAY_ON, where even a bare
-; call/ret shifts the raster phase and moves the game's mid-frame sprite
-; toggle by a scanline. hook_menu_start accepts that cost because it
-; needs the display-off window to touch VRAM, and it only pays it when
-; entering the title screen, under the fade-in.
+; The gameplay hook sits on the update dispatch rather than the state
+; START dispatch, deliberately. The update loop is vblank-synchronised,
+; so extra work there is absorbed; the START path runs with the display
+; off and ends in DISPLAY_ON, where even a bare call/ret shifts the
+; raster phase and moves the game's mid-frame sprite toggle by a
+; scanline. hook_menu_start accepts that cost because it needs the
+; display-off window to write VRAM, and only pays it when entering the
+; title screen, under the fade-in.
 ; =====================================================================
 
 ; ---- engine globals (recovered from the ROM) ----
 KEYS          = $CCCB           ; ZGB keys        (this frame)
 PREV_KEYS     = $CCCA           ; ZGB previous_keys
+TUTORIAL      = $CC11           ; StateMenu: 0 = title art, 1 = tutorial page
+FRAME_TICK    = $C0A3           ; free-running, +1 per frame; read-only here
 LEVEL         = $C11C           ; stage within the world, 0-based
 VIDAS         = $C11E           ; lives, as shown on the stage banner
 MUNDO         = $C126           ; world, 0-based
-CHECKPOINT    = $C12F           ; x_checkpoint, y_checkpoint - four bytes, two
-                                ; 16-bit coords. StateGame's START spawns the
-                                ; player here, falling back to the stage's
-                                ; default entry point when x is zero.
 SETSTATE      = $0AB0           ; void SetState(UINT8 state) - arg in A
 MENU_START    = $7EF7           ; stock Start_StateMenu,  in ROM bank $07
 MENU_UPDATE   = $7FA6           ; stock Update_StateMenu, in ROM bank $07
 GAME_UPDATE   = $7FFC           ; stock Update_StateGame, in ROM bank $1C
 
-; ---- the "B:CONTINUE" prompt on the title screen ----
-; The title screen is a full-screen illustration of unique tiles ($00-$9B)
-; with no reusable font, so the prompt brings its own glyphs. BG tile data
-; is at $8800 with signed addressing (LCDC bit 4 clear), so tile $9C lands
-; at $89C0 - the start of 1600 bytes of VRAM that is zero on this screen
-; and below every sprite tile the title screen uses (those stop at $87FF).
-; The glyphs are drawn over the blank face of the moon, on the row between
-; the logo and the blinking PRESS START sprite.
-PROMPT_TILES  = 10              ; one tile per character
-PROMPT_BYTES  = 160             ; PROMPT_TILES * 16; patch.py checks the two agree
-PROMPT_FIRST  = $9C             ; first BG tile index used
-PROMPT_VRAM   = $89C0           ; where tile $9C lives under signed addressing
-PROMPT_MAP    = $9925           ; $9800 + 9*32 + 5 -> row 9, column 5
-
 ST_TITULO     = 1               ; StateTituloNivel - the "STAGE x-y" banner
 
 J_B           = $20             ; GBDK joypad bit for the B button
+
+; ---- the continue prompt ----
+; The title screen is a dense full-screen illustration with no blank row
+; to put a second line of text on, so the prompt shares the line that
+; already reads "SELECT:CREDITS", alternating with it about once a
+; second. It is set in the game's own 3x5 typeface, lifted pixel for
+; pixel out of those very tiles, at the same size and position.
+;
+; The stock line lives in background tiles $8C-$93 (row 15, columns
+; 6-13). Those are left untouched; the prompt gets eight fresh tiles, so
+; alternating is just eight tilemap bytes and the original art is never
+; overwritten. BG tile data is at $8800 with signed addressing (LCDC bit
+; 4 clear), so tile $9C lands at $89C0 - the start of 1600 bytes of VRAM
+; that is zero on this screen and clear of every sprite tile it uses
+; (those stop at $87FF).
+LINE_TILES    = 8
+LINE_BYTES    = 128             ; LINE_TILES * 16; patch.py checks these agree
+LINE_VRAM     = $89C0           ; where tile $9C lives under signed addressing
+LINE_MAP      = $99E6           ; $9800 + 15*32 + 6 -> row 15, column 6
+LINE_FIRST    = $9C             ; first tile of "B:CONTINUE"
+ORIG_FIRST    = $8C             ; first tile of the stock "SELECT:CREDITS"
+BLINK_BIT     = $40             ; bit 6 of FRAME_TICK: flips every 64 frames
 
 ; ---- save block layout in cartridge SRAM ----
 SRAM_MAGIC    = $A000           ; 5 bytes
@@ -66,8 +72,8 @@ SRAM_VER      = $A005
 SRAM_LEN      = $A006
 SRAM_SUM      = $A007
 SRAM_DATA     = $A008
-PAYLOAD_LEN   = 23
-SAVE_VERSION  = 1
+PAYLOAD_LEN   = 19
+SAVE_VERSION  = 2               ; v1 stored the checkpoint too; see var_table
 
 ; Offsets of individual variables inside the payload. They follow from
 ; var_table at the bottom of this file; patch.py re-derives them from
@@ -75,17 +81,19 @@ SAVE_VERSION  = 1
 SRAM_LEVEL    = SRAM_DATA+11
 SRAM_VIDAS    = SRAM_DATA+13
 SRAM_MUNDO    = SRAM_DATA+16
-SRAM_CHECKPOINT = SRAM_DATA+17  ; four bytes, matching CHECKPOINT above
 
 ; =====================================================================
 ; Hook A - installed as updateFuncs[StateGame].
 ;
-; Autosaves whenever the run reaches a new checkpoint in the game's own
-; sense of the word: a new stage, a new world, a change in lives (a
-; death, or a 1-up), or the player touching a mid-stage checkpoint. The
-; comparison is made against the copy already in SRAM, so no scratch RAM
-; is needed and an unchanged frame costs a handful of instructions and
-; no SRAM write.
+; Autosaves whenever the run's identity changes: a new stage, a new
+; world, or a change in lives (a death, or a 1-up). The comparison is
+; made against the copy already in SRAM, so no scratch RAM is needed and
+; an unchanged frame costs a handful of instructions and no SRAM write.
+;
+; Note what this means for a fresh run: pressing START does not destroy
+; an existing save. It survives the title screen, the tutorial page and
+; the whole stage banner, and is only overwritten on the first frame of
+; actual play.
 ; =====================================================================
 hook_game_update:
         call GAME_UPDATE        ; stock Update_StateGame (bank $1C, already paged in)
@@ -101,19 +109,7 @@ hook_game_update:
         ld a,(MUNDO)
         ld hl,SRAM_MUNDO
         cp (hl)
-        jr nz,hgu_changed
-        ld hl,SRAM_CHECKPOINT
-        ld de,CHECKPOINT
-        ld b,4
-hgu_cp:
-        ld a,(de)
-        cp (hl)
-        jr nz,hgu_changed
-        inc hl
-        inc de
-        dec b
-        jr nz,hgu_cp
-        jr hgu_done             ; nothing worth writing
+        jr z,hgu_done           ; nothing worth writing
 hgu_changed:
         ld a,(VIDAS)
         or a
@@ -125,43 +121,63 @@ hgu_done:
 ; =====================================================================
 ; Hook B - installed as startFuncs[StateMenu].
 ;
-; Draws the "B:CONTINUE" prompt, but only when there is a save worth
+; Builds the prompt's tiles, but only when there is a save worth
 ; advertising. main() holds the display off for the whole state START
 ; path (DISPLAY_ON comes after START returns), and Start_StateMenu never
 ; touches LCDC, so VRAM is freely writable here with no vblank juggling.
+; Only the tile data is written; the tilemap is left alone, so a screen
+; with no save behind it is the stock artwork, untouched.
 ; =====================================================================
 hook_menu_start:
         call MENU_START         ; stock Start_StateMenu (bank $07, already paged in)
         call sram_on
         call save_valid
-        jr nz,hms_done          ; nothing to continue from - leave the art alone
-        ld hl,prompt_glyphs
-        ld de,PROMPT_VRAM
-        ld b,PROMPT_BYTES
-hms_tiles:
+        jr nz,hms_done          ; nothing to continue from
+        ld hl,line_tiles
+        ld de,LINE_VRAM
+        ld b,LINE_BYTES
+hms_copy:
         ld a,(hl+)
         ld (de),a
         inc de
         dec b
-        jr nz,hms_tiles
-        ld de,PROMPT_MAP
-        ld a,PROMPT_FIRST
-        ld b,PROMPT_TILES
-hms_map:
-        ld (de),a
-        inc de
-        inc a                   ; glyphs are stored in the order they are drawn
-        dec b
-        jr nz,hms_map
+        jr nz,hms_copy
 hms_done:
         jp sram_off
 
 ; =====================================================================
 ; Hook C - installed as updateFuncs[StateMenu].
-; On the title screen, B loads the save and jumps to the stage banner.
+;
+; Alternates the bottom line between the stock "SELECT:CREDITS" and
+; "B:CONTINUE", and loads the save when B is pressed. Both are gated on
+; the save validating, so with no save the line never changes and B does
+; nothing. The tutorial page reuses this state and redraws the whole
+; background, so leave its tilemap alone.
 ; =====================================================================
 hook_menu_update:
         call MENU_UPDATE        ; stock Update_StateMenu (bank $07, already paged in)
+        call sram_on
+        call save_valid
+        jr nz,hmu_done          ; no save: stock behaviour in full
+        call sram_off
+        ld a,(TUTORIAL)
+        or a
+        jr nz,hmu_keys          ; tutorial page showing - do not touch its map
+        ld a,(FRAME_TICK)
+        and BLINK_BIT
+        ld a,LINE_FIRST
+        jr nz,hmu_draw          ; ld does not disturb the flags from AND
+        ld a,ORIG_FIRST
+hmu_draw:
+        ld de,LINE_MAP
+        ld b,LINE_TILES
+hmu_cell:
+        ld (de),a
+        inc de
+        inc a                   ; both runs of tiles are consecutive
+        dec b
+        jr nz,hmu_cell
+hmu_keys:
         ld a,(KEYS)
         and J_B
         ret z                   ; B not held
@@ -169,6 +185,8 @@ hook_menu_update:
         and J_B
         ret nz                  ; B was already held last frame - not a fresh press
         jp load_game
+hmu_done:
+        jp sram_off
 
 ; =====================================================================
 ; save_block - write payload, magic and checksum. Entered with SRAM
@@ -316,33 +334,39 @@ sram_off:
 magic:
         db "HRMSV"
 
-; ---- Prompt glyphs, one 8x8 tile per character of "B:CONTINUE", stored
-; ---- in drawing order. 2bpp Game Boy format: two bytes per row, low then
-; ---- high bitplane. Both planes carry the same mask, so the text is
-; ---- colour 3 (black under the title screen's BGP) on the blank moon.
-prompt_glyphs:
-        db $78,$78,$44,$44,$44,$44,$78,$78,$44,$44,$44,$44,$78,$78,$00,$00   ; 'B'
-        db $00,$00,$18,$18,$18,$18,$00,$00,$18,$18,$18,$18,$00,$00,$00,$00   ; ':'
-        db $38,$38,$44,$44,$40,$40,$40,$40,$40,$40,$44,$44,$38,$38,$00,$00   ; 'C'
-        db $38,$38,$44,$44,$44,$44,$44,$44,$44,$44,$44,$44,$38,$38,$00,$00   ; 'O'
-        db $44,$44,$64,$64,$54,$54,$54,$54,$4C,$4C,$44,$44,$44,$44,$00,$00   ; 'N'
-        db $7C,$7C,$10,$10,$10,$10,$10,$10,$10,$10,$10,$10,$10,$10,$00,$00   ; 'T'
-        db $38,$38,$10,$10,$10,$10,$10,$10,$10,$10,$10,$10,$38,$38,$00,$00   ; 'I'
-        db $44,$44,$64,$64,$54,$54,$54,$54,$4C,$4C,$44,$44,$44,$44,$00,$00   ; 'N'
-        db $44,$44,$44,$44,$44,$44,$44,$44,$44,$44,$44,$44,$38,$38,$00,$00   ; 'U'
-        db $7C,$7C,$40,$40,$40,$40,$78,$78,$40,$40,$40,$40,$7C,$7C,$00,$00   ; 'E'
+; ---- "B:CONTINUE" set in the game's own 3x5 typeface, occupying the
+; ---- same eight tiles' worth of pixels as the stock credits line. Two
+; ---- bytes per row, low bitplane then high: the high plane is all ones
+; ---- throughout, so blank pixels read as colour 2 (the line's
+; ---- background) and text pixels as colour 3 (black), exactly as the
+; ---- stock tiles are drawn.
+line_tiles:
+; text width 36px, centred at x+14 within the 64px credits block
+        db $00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF   ; tile 0
+        db $00,$FF,$00,$FF,$03,$FF,$02,$FF,$03,$FF,$02,$FF,$03,$FF,$00,$FF   ; tile 1
+        db $00,$FF,$00,$FF,$03,$FF,$A4,$FF,$04,$FF,$A4,$FF,$03,$FF,$00,$FF   ; tile 2
+        db $00,$FF,$00,$FF,$25,$FF,$56,$FF,$55,$FF,$55,$FF,$25,$FF,$00,$FF   ; tile 3
+        db $00,$FF,$00,$FF,$75,$FF,$25,$FF,$25,$FF,$25,$FF,$25,$FF,$00,$FF   ; tile 4
+        db $00,$FF,$00,$FF,$55,$FF,$95,$FF,$55,$FF,$55,$FF,$5D,$FF,$00,$FF   ; tile 5
+        db $00,$FF,$00,$FF,$C0,$FF,$00,$FF,$80,$FF,$00,$FF,$C0,$FF,$00,$FF   ; tile 6
+        db $00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF   ; tile 7
 
-; ---- The progress block: exactly the variables StateMenu's START
-; ---- initialises for a new game, which is by definition the complete
-; ---- set that defines a run. Engine globals sharing the region (the
-; ---- music fade counter at $C10F in particular) are deliberately
+; ---- The progress block: the variables StateMenu's START initialises
+; ---- for a new game, minus the checkpoint. That set is by construction
+; ---- the complete definition of a run, and engine globals sharing the
+; ---- region (the music fade counter at $C10F in particular) are
 ; ---- excluded.
+; ----
+; ---- x_checkpoint/y_checkpoint ($C12F-$C132) are deliberately NOT
+; ---- saved. StateGame's START spawns the player at the stage's default
+; ---- entry point when they are zero, and StateMenu's START has already
+; ---- zeroed them by the time a load runs - so restoring always resumes
+; ---- at the beginning of the saved stage rather than mid-stage.
 var_table:
         db $0E,$C1,1            ; $C10E
         db $10,$C1,1            ; $C110
         db $13,$C1,13           ; $C113-$C11F  (includes level $C11C, lives $C11E)
         db $22,$C1,1            ; $C122
         db $26,$C1,1            ; $C126        (world)
-        db $2F,$C1,4            ; $C12F-$C132  (checkpoint coords)
         db $35,$C1,2            ; $C135-$C136
         db 0,0,0                ; terminator

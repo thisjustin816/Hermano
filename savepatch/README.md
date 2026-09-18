@@ -39,49 +39,53 @@ original game data.
 | Title screen  | START    | Start a new game (unchanged)                  |
 | Title screen  | SELECT   | Credits (unchanged)                           |
 
-The title screen shows a **`B:CONTINUE`** prompt across the face of the moon,
-between the logo and the blinking `PRESS START`, but only when there is a
-valid save to continue from. With no save the screen is the stock artwork,
-untouched.
+The title screen's bottom line alternates, about once a second, between the
+stock `SELECT:CREDITS` and **`B:CONTINUE`** — same typeface, same size, same
+position — but only when there is a valid save to continue from. With no save
+the line never changes and the screen is the stock artwork, untouched.
 
-There is no "erase save" — START always begins a fresh run from stage 1-1, and
-the next checkpoint overwrites the save.
+### Starting a new game over an existing save
+
+Pressing START does **not** immediately destroy the save. It survives the title
+screen, the tutorial page and the whole stage banner; it is overwritten on the
+first frame of actual play in stage 1-1. So there is roughly four seconds in
+which resetting still leaves the old save intact.
+
+There is no explicit "erase save".
 
 ## What gets saved, and when
 
-The autosave fires during gameplay whenever the run reaches a checkpoint in
-the game's own sense of the word:
+The autosave fires during gameplay whenever the run's identity changes:
 
 - **finishing a stage** — the stage-complete routine increments `level`
-  (`$C11C`) and clears the checkpoint coordinates;
+  (`$C11C`);
 - **reaching a new world**;
-- **touching a mid-stage checkpoint** — `StateGame`'s START spawns the player
-  at `x_checkpoint`/`y_checkpoint` (`$C12F`/`$C131`), falling back to the
-  stage's default entry point when they are zero;
 - **losing or gaining a life**.
 
-So resuming puts you back exactly where a death would have: same stage, same
-mid-stage checkpoint, same lives. It never checkpoints a run whose lives have
-already hit zero, so a game over always leaves the previous checkpoint intact.
+It never checkpoints a run whose lives have already hit zero, so a game over
+always leaves the previous save intact.
 
-The saved block is exactly the set of variables that `StateMenu`'s START
-function initialises for a new game. That set is, by construction, the
-complete definition of a run: world, stage, lives, keys, bombs and checkpoint
-coordinates. Engine globals that share the same WRAM region — the music fade
-counter at `$C10F` in particular — are deliberately excluded.
+**Resuming always starts the saved stage from the beginning.** The game does
+have mid-stage checkpoints — `StateGame`'s START spawns the player at
+`x_checkpoint`/`y_checkpoint` (`$C12F`/`$C131`), falling back to the stage's
+default entry point when they are zero — but those four bytes are deliberately
+left out of the save. `StateMenu`'s START has already zeroed them by the time
+a load runs, so the restored run takes the stage's default entry point.
 
-Restoring therefore reproduces exactly the state the game builds for itself
-when it respawns you at a checkpoint, which is a well-travelled code path
-rather than a new one.
+The saved block is otherwise exactly the set of variables that `StateMenu`'s
+START function initialises for a new game. That set is, by construction, the
+complete definition of a run: world, stage, lives, keys and bombs. Engine
+globals that share the same WRAM region — the music fade counter at `$C10F` in
+particular — are deliberately excluded.
 
 ### SRAM layout
 
 ```
 $A000  magic "HRMSV"          5 bytes
-$A005  format version         1
-$A006  payload length         23
+$A005  format version         2
+$A006  payload length         19
 $A007  payload checksum       8-bit additive
-$A008  payload                23 bytes
+$A008  payload                19 bytes
 ```
 
 A load is rejected unless the magic, version, length and checksum all agree,
@@ -97,7 +101,7 @@ The patch overwrites **no original code or data**. Its entire footprint is:
 |-------------------|------|---------------------------------------------------|
 | `$0147`, `$0149`  | 2    | cartridge type → MBC5+RAM+BATTERY, 8 KB of SRAM   |
 | `$014D`–`$014F`   | 3    | recomputed header and global checksums            |
-| `$3500`–`$36E3`   | 484  | injected code and glyphs, into what was `$FF` padding |
+| `$3500`–`$36CA`   | 459  | injected code and tiles, into what was `$FF` padding |
 | `$6F25`, `$6F28`  | 2    | `startFuncs[StateMenu]` → `hook_menu_start`       |
 | `$6F2D`, `$6F30`  | 2    | `updateFuncs[StateMenu]` → `hook_menu_update`     |
 | `$6F6E`, `$6F71`  | 2    | `updateFuncs[StateGame]` → `hook_game_update`     |
@@ -140,21 +144,30 @@ raster phase and a real behaviour change.
 
 ### Drawing the prompt
 
-The title screen is a full-screen illustration of unique tiles (`$00`–`$9B`)
-with no reusable font, so the prompt brings its own glyphs — ten 8×8 tiles, one
-per character of `B:CONTINUE`.
+The title screen is a dense full-screen illustration; measured tile column by
+tile column, no row on it has enough clear space for another line of text. So
+the prompt shares the line that already reads `SELECT:CREDITS`, alternating
+with it every 64 frames.
 
-BG tile data is at `$8800` with signed addressing (LCDC bit 4 clear), so tile
-`$9C` lands at `$89C0`. On the title screen that address begins 1600 bytes of
-VRAM that is entirely zero and sits above every sprite tile the screen uses
-(those stop at `$87FF`), giving 100 free tile slots with no conflict. The
-glyphs go over the blank face of the moon at row 9, which the stock map fills
-with a solid blank tile and which clears the `PRESS START` sprite at row 11.
+It is set in the game's own 3×5 proportional typeface, lifted pixel for pixel
+out of those very tiles — `C`, `E`, `T` and `I` are the game's own letterforms,
+and `B`, `O`, `N` and `U`, which the stock string does not contain, are drawn
+to match. Glyphs are 3px wide on a 4px pitch, with the 1px-wide `:` and `I`
+the game itself uses.
 
-`main()` holds the display off for the whole state START path and
-`Start_StateMenu` never touches LCDC, so the write needs no vblank timing
-games. The title screen's BG map is completely static — measured at zero
-changes over 240 idle frames — so writing once per menu entry is enough.
+The stock line lives in background tiles `$8C`–`$93` (row 15, columns 6–13).
+Those are never modified. The prompt gets eight fresh tiles at `$89C0` — tile
+`$9C` under the screen's signed BG addressing, at the start of 1600 bytes of
+VRAM that is zero here and clear of every sprite tile the screen uses (those
+stop at `$87FF`). Alternating is then just eight tilemap bytes, so the original
+art survives intact and switching back is exact.
+
+The tile data is written by `hook_menu_start`, where `main()` holds the display
+off for the whole state START path and `Start_StateMenu` never touches LCDC —
+so it needs no vblank timing games. Only the tilemap is touched per frame, and
+only while the title art is up: the tutorial page reuses `StateMenu` and
+redraws the whole background, so it is left alone. Measured over 900 frames,
+the line is always fully one string or fully the other — never a mix.
 
 Detecting "has the run changed" would normally want a byte of scratch RAM,
 which there is no safe place for. Instead the hook compares against the copy
@@ -175,15 +188,16 @@ python3 verify.py Hermano.gb Hermano-save.gb
 ```
 
 checks rendering fidelity against the stock ROM, that progress reaches SRAM,
-that it survives a power cycle, that the prompt appears only when there is a
-valid save behind it, and that blank, truncated and corrupted saves are all
-rejected.
+that it survives a power cycle, that the prompt takes its turn only when there
+is a valid save behind it, that a load does not bring back a mid-stage
+checkpoint, and that blank, truncated and corrupted saves are all rejected.
 
 ## Possible extensions
 
 - **Multiple save slots.** There is 8 KB of SRAM and the block uses 31 bytes.
-- **Saving mid-stage rather than at checkpoints.** Would mean capturing enemy
-  and item state, which the current variable block does not cover.
+- **Resuming mid-stage.** The checkpoint coordinates are already known and
+  would only need adding back to `var_table`; they are left out on purpose so
+  a resumed stage always starts clean.
 
 ## Notes
 

@@ -53,7 +53,6 @@ EXPECTED_VAR_OFFSETS = {
     "SRAM_LEVEL": 0xC11C,
     "SRAM_VIDAS": 0xC11E,
     "SRAM_MUNDO": 0xC126,
-    "SRAM_CHECKPOINT": 0xC12F,
 }
 
 # Cartridge header fields.
@@ -139,16 +138,16 @@ def check_var_offsets(code, labels, consts):
         raise SystemExit(
             f"var_table holds {offset} bytes but PAYLOAD_LEN is {consts['PAYLOAD_LEN']}"
         )
-    if consts["PROMPT_BYTES"] != consts["PROMPT_TILES"] * 16:
+    if consts["LINE_BYTES"] != consts["LINE_TILES"] * 16:
         raise SystemExit(
-            f"PROMPT_BYTES is {consts['PROMPT_BYTES']} but PROMPT_TILES implies "
-            f"{consts['PROMPT_TILES'] * 16}"
+            f"LINE_BYTES is {consts['LINE_BYTES']} but LINE_TILES implies "
+            f"{consts['LINE_TILES'] * 16}"
         )
-    glyph_bytes = labels["var_table"] - labels["prompt_glyphs"]
-    if glyph_bytes != consts["PROMPT_BYTES"]:
+    tile_bytes = labels["var_table"] - labels["line_tiles"]
+    if tile_bytes != consts["LINE_BYTES"]:
         raise SystemExit(
-            f"prompt_glyphs holds {glyph_bytes} bytes but PROMPT_BYTES is "
-            f"{consts['PROMPT_BYTES']}"
+            f"line_tiles holds {tile_bytes} bytes but LINE_BYTES is "
+            f"{consts['LINE_BYTES']}"
         )
     for name, addr in EXPECTED_VAR_OFFSETS.items():
         want = consts["SRAM_DATA"] + derived[addr]

@@ -14,8 +14,10 @@ Runs four checks against a stock ROM and its patched counterpart:
   2. Autosave - progress reaches SRAM once play begins, with a valid header.
   3. Power cycle - the save survives a cold boot and B restores it.
   4. Robustness - blank, truncated and corrupted saves are all ignored.
-  5. Prompt - "B:CONTINUE" appears on the title screen only when there is
-     a valid save to continue from.
+  5. Prompt - "B:CONTINUE" takes its turn on the title screen's bottom
+     line only when there is a valid save to continue from.
+  6. Level-start resume - a load must not bring back a mid-stage
+     checkpoint; resuming always begins the saved stage from its start.
 
 Usage:
     python3 verify.py <stock.gb> <patched.gb>
@@ -31,9 +33,14 @@ CURRENT_STATE = 0xC188
 MUNDO, LEVEL, VIDAS = 0xC126, 0xC11C, 0xC11E
 ST_MENU, ST_TITULO, ST_GAME = 0, 1, 3
 
-# The "B:CONTINUE" prompt: first BG map cell it occupies, and the tile index
-# it should hold once drawn.
-PROMPT_MAP, PROMPT_FIRST = 0x9925, 0x9C
+# The continue prompt shares the bottom line with "SELECT:CREDITS",
+# alternating with it. This is the first tilemap cell of that line and the
+# tile index it carries while the prompt is the one showing.
+PROMPT_MAP, PROMPT_FIRST = 0x99E6, 0x9C
+
+# x_checkpoint/y_checkpoint, which a load must NOT restore - resuming always
+# starts at the beginning of the saved stage.
+CHECKPOINT = 0xC12F
 
 # hook_menu_start runs on the state START path, so entering the title screen
 # can shift the raster phase for a single frame. Isolated frames are fine;
@@ -85,6 +92,15 @@ def read_sram(pb, n=32):
     data = [pb.memory[0xA000 + i] for i in range(n)]
     pb.memory[0x0000] = 0x00
     return data
+
+
+def prompt_appears(pb, frames=200):
+    """True if the prompt takes its turn on the bottom line within `frames`."""
+    for _ in range(frames):
+        pb.tick(1, True)
+        if pb.memory[PROMPT_MAP] == PROMPT_FIRST:
+            return True
+    return False
 
 
 def stored_progress(pb):
@@ -150,10 +166,10 @@ def main():
     pb = boot(patched)
     to_title(pb)
     pb.tick(30, True)
-    if pb.memory[PROMPT_MAP] == PROMPT_FIRST:
+    shown = prompt_appears(pb)
+    print(f"   prompt with no save present: {'SHOWN (bad!)' if shown else 'never appears'}")
+    if shown:
         failures.append("the continue prompt is shown with no save present")
-    print(f"   prompt cell with no save: {pb.memory[PROMPT_MAP]:#04x} "
-          f"(expected anything but {PROMPT_FIRST:#04x})")
     pb.stop(save=False)
 
     pb = boot(patched)
@@ -164,6 +180,12 @@ def main():
     pb.memory[MUNDO], pb.memory[LEVEL], pb.memory[VIDAS] = 1, 2, 6
     press(pb, 'start')
     pb.tick(400, True)
+    # Walk the player past a mid-stage checkpoint, then force a re-save. The
+    # checkpoint must not come back on load.
+    for i, v in enumerate((0x40, 0x02, 0x90, 0x00)):
+        pb.memory[CHECKPOINT + i] = v
+    pb.memory[VIDAS] = 6
+    pb.tick(8, True)
     header = read_sram(pb)
     progress = stored_progress(pb)
     print(f"   state={pb.memory[CURRENT_STATE]} magic={bytes(header[0:5])!r} "
@@ -176,17 +198,21 @@ def main():
     pb = boot(patched)
     to_title(pb)
     pb.tick(30, True)
-    shown = pb.memory[PROMPT_MAP] == PROMPT_FIRST
-    print(f"   prompt cell with a save: {pb.memory[PROMPT_MAP]:#04x} "
-          f"({'shown' if shown else 'MISSING'})")
+    shown = prompt_appears(pb)
+    print(f"   prompt with a save: {'shown' if shown else 'MISSING'}")
     if not shown:
         failures.append("the continue prompt is missing despite a valid save")
     press(pb, 'b')
     pb.tick(120, True)
     live = (pb.memory[MUNDO], pb.memory[LEVEL], pb.memory[VIDAS])
-    print(f"   after B: state={pb.memory[CURRENT_STATE]} (world,stage,lives)={live}")
+    cp = [pb.memory[CHECKPOINT + i] for i in range(4)]
+    print(f"   after B: state={pb.memory[CURRENT_STATE]} (world,stage,lives)={live} "
+          f"checkpoint={cp}")
     if pb.memory[CURRENT_STATE] != ST_TITULO or live != (1, 2, 6):
         failures.append("continue did not restore the saved run")
+    if any(cp):
+        failures.append(f"continue restored a mid-stage checkpoint {cp}; "
+                        f"it should resume at the start of the stage")
     pb.stop(save=False)
 
     print("4. invalid saves are ignored")
@@ -205,10 +231,10 @@ def main():
         pb = boot(patched)
         to_title(pb)
         pb.tick(30, True)
+        no_prompt = not prompt_appears(pb, 150)
         press(pb, 'b')
         pb.tick(90, True)
         ignored = pb.memory[CURRENT_STATE] == ST_MENU
-        no_prompt = pb.memory[PROMPT_MAP] != PROMPT_FIRST
         print(f"   {name:<18} -> {'ignored' if ignored else 'LOADED (bad!)'}, "
               f"prompt {'hidden' if no_prompt else 'SHOWN (bad!)'}")
         if not ignored:
