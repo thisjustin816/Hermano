@@ -101,6 +101,10 @@ class Assembler:
             return [0xC9] if not parts else [0xC0 | (CC[parts[0]] << 3)]
         if mnem == 'reti':
             return [0xD9]
+        if mnem == 'di':
+            return [0xF3]
+        if mnem == 'ei':
+            return [0xFB]
         if mnem == 'xor' and parts[0] in R8:
             return [0xA8 | R8[parts[0]]]
         if mnem == 'or' and parts[0] in R8:
@@ -141,6 +145,14 @@ class Assembler:
                 raise AsmError(f'jr out of range at {pc:#06x}: {off}')
             off &= 0xFF
             return ([0x18] if len(parts) == 1 else [0x20 | (CC[parts[0]] << 3)]) + [off]
+        if mnem == 'ldh':
+            # ldh a,($xx) / ldh ($xx),a - the $FF00-page accessors
+            dst, src = parts[0], parts[1]
+            if dst == 'a' and mem(src):
+                return [0xF0] + n8(inner(src))
+            if mem(dst) and src == 'a':
+                return [0xE0] + n8(inner(dst))
+            raise AsmError(f'unsupported ldh: {a}')
         if mnem == 'ld':
             dst, src = parts[0], parts[1]
             # 16-bit immediate loads

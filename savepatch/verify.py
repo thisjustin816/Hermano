@@ -18,6 +18,13 @@ Runs four checks against a stock ROM and its patched counterpart:
      line only when there is a valid save to continue from.
   6. Level-start resume - a load must not bring back a mid-stage
      checkpoint; resuming always begins the saved stage from its start.
+  7. VRAM timing - every tilemap write must land during vblank or with
+     the display off. The PPU silently rejects VRAM writes while it is
+     fetching pixels, and because the hook runs at the same point in
+     every frame the same cells get rejected every time - which does not
+     look like a tear, it leaves the two messages permanently
+     interleaved. Screen comparison does not catch this (and PyBoy does
+     not model the restriction), so assert it directly.
 
 Usage:
     python3 verify.py <stock.gb> <patched.gb>
@@ -28,6 +35,11 @@ import sys
 
 import numpy as np
 from pyboy import PyBoy
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import asm
+import patch as P
 
 CURRENT_STATE = 0xC188
 MUNDO, LEVEL, VIDAS = 0xC126, 0xC11C, 0xC11E
@@ -243,6 +255,35 @@ def main():
             failures.append(f"{name} still advertised a continue prompt")
         pb.stop(save=False)
     open(patched + '.ram', 'wb').write(good)
+
+    print("7. tilemap writes land where the PPU allows them")
+    code, labels, _ = asm.assemble(
+        open(os.path.join(HERE, "savepatch.asm")).read(), org=P.CODE_ORG)
+    pb = boot(patched)
+    to_title(pb)
+    pb.tick(30, True)
+    seen = {"safe": 0, "unsafe": 0}
+
+    def classify(_ctx):
+        lcd_on = (pb.memory[0xFF40] & 0x80) != 0
+        ly = pb.memory[0xFF44]
+        ok = (not lcd_on) or (144 <= ly <= 153)
+        seen["safe" if ok else "unsafe"] += 1
+
+    for label in ("hmu_cell", "hmu_keys"):
+        pb.hook_register(0, labels[label], classify, None)
+    pb.tick(1200, True)
+    pb.stop(save=False)
+    total = seen["safe"] + seen["unsafe"]
+    rate = seen["unsafe"] / total if total else 0
+    print(f"   {total} writes sampled, {seen['unsafe']} outside a safe window "
+          f"({rate:.2%})")
+    if total == 0:
+        failures.append("no tilemap writes observed - the hook never ran")
+    elif rate > 0.01:
+        failures.append(
+            f"{rate:.2%} of tilemap writes land while the PPU is fetching "
+            f"pixels; they will be dropped on hardware")
 
     print()
     if failures:

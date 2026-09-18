@@ -75,6 +75,14 @@ BLANK_TILE    = LINE_FIRST+LINE_TILES   ; the line's plain background
 BLINK_BIT     = $40             ; which message
 BLINK_GAP     = $38             ; zero for the first 8 frames of each message
 
+LCDC_REG      = $40             ; $FF40
+LY_REG        = $44             ; $FF44
+; Write only in the first few lines of vblank (LY 144-150). Entering at
+; 151-153 leaves too little of it, and the eight writes spill past the end
+; into the next frame's pixel fetch, where the PPU rejects them.
+VBL_FIRST     = 144
+VBL_LAST      = 151             ; exclusive
+
 ; ---- save block layout in cartridge SRAM ----
 SRAM_MAGIC    = $A000           ; 5 bytes
 SRAM_VER      = $A005
@@ -186,14 +194,38 @@ hmu_blank:
         ld c,0                  ; the one background tile, eight times over
         ld a,BLANK_TILE
 hmu_draw:
+        ; All eight cells have to change between two frames, not during
+        ; one. This hook runs around LY 17-31 - the middle of active
+        ; display - where the PPU rejects VRAM writes while it is fetching
+        ; pixels. Since it runs at the same point every frame, the same
+        ; cells are rejected every frame, so the line does not merely tear
+        ; for a frame: it sits permanently interleaved, half of one
+        ; message and half of the other. Wait for vblank, where VRAM is
+        ; always writable, and do all eight of them there.
+        ld l,a                  ; park the tile index; the wait needs A
         ld de,LINE_MAP
         ld b,LINE_TILES
+hmu_vbl:
+        ldh a,(LCDC_REG)
+        and $80
+        jr z,hmu_go             ; display off - VRAM is free, do not wait for an LY that never advances
+        ldh a,(LY_REG)
+        cp VBL_FIRST
+        jr c,hmu_vbl            ; still drawing
+        cp VBL_LAST
+        jr nc,hmu_vbl           ; too late in vblank - catch the next one
+hmu_go:
+        ld a,l
+        di                      ; a timer interrupt mid-burst can stretch these
+                                ; eight writes past the end of vblank, and the
+                                ; ones that land after it are dropped
 hmu_cell:
         ld (de),a
         inc de
         add a,c
         dec b
         jr nz,hmu_cell
+        ei
 hmu_keys:
         ld a,(KEYS)
         and J_B

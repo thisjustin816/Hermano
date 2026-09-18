@@ -107,7 +107,7 @@ The patch overwrites **no original code or data**. Its entire footprint is:
 |-------------------|------|---------------------------------------------------|
 | `$0147`, `$0149`  | 2    | cartridge type → MBC5+RAM+BATTERY, 8 KB of SRAM   |
 | `$014D`–`$014F`   | 3    | recomputed header and global checksums            |
-| `$3500`–`$36E9`   | 490  | injected code and tiles, into what was `$FF` padding |
+| `$3500`–`$36FD`   | 510  | injected code and tiles, into what was `$FF` padding |
 | `$6F25`, `$6F28`  | 2    | `startFuncs[StateMenu]` → `hook_menu_start`       |
 | `$6F2D`, `$6F30`  | 2    | `updateFuncs[StateMenu]` → `hook_menu_update`     |
 | `$6F6E`, `$6F71`  | 2    | `updateFuncs[StateGame]` → `hook_game_update`     |
@@ -178,11 +178,34 @@ original art survives intact and switching back is exact.
 
 The tile data is written by `hook_menu_start`, where `main()` holds the display
 off for the whole state START path and `Start_StateMenu` never touches LCDC —
-so it needs no vblank timing games. Only the tilemap is touched per frame, and
-only while the title art is up: the tutorial page reuses `StateMenu` and
-redraws the whole background, so it is left alone. Measured over 900 frames,
-the line is always fully one string, fully the other, or fully blank — never a
-mix.
+measured, all 144 of those writes happen with the LCD off, so they need no
+timing care at all. Only the tilemap is touched per frame, and only while the
+title art is up: the tutorial page reuses `StateMenu` and redraws the whole
+background, so it is left alone.
+
+### Writing the tilemap at the right moment
+
+The eight tilemap cells have to change between two frames, never during one,
+and that takes more than writing them together. `hook_menu_update` runs at
+**LY 17–31** — the middle of active display, because the stock menu update and
+`SpriteManagerUpdate` run first — where the PPU silently rejects VRAM writes
+while it is fetching pixels. Since the hook runs at the same point every frame,
+the *same* cells are rejected every frame: the result is not a tear that
+resolves, it is a line stuck permanently half `B:CONTINUE` and half
+`SELECT:CREDITS`.
+
+So the write waits for `LY` to reach 144–150 and does all eight there, with
+interrupts masked so a timer interrupt cannot stretch the burst past the end of
+vblank. The window stops at 150 rather than 153 because entering at 151+ leaves
+too little of vblank for eight writes. When the LCD is off the wait is skipped
+— VRAM is free then, and `LY` would never advance to satisfy it.
+
+Comparing rendered frames does not catch any of this, and PyBoy does not model
+the restriction, so `verify.py` asserts it directly by hooking the write and
+reading `LY`/`LCDC`. Against the build that had the bug it reports 100% of
+writes unsafe; against the current one, 0.2% — the remainder being frames
+around a screen transition, where a dropped write is corrected by the next
+frame rather than persisting.
 
 Detecting "has the run changed" would normally want a byte of scratch RAM,
 which there is no safe place for. Instead the hook compares against the copy
