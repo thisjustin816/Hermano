@@ -89,11 +89,17 @@ over keeps the stakes the original had. Nothing is softened — the continue
 count itself is part of the saved block, so resuming gives you the continues
 you actually had left, not a fresh three.
 
-The continue screen does **not** clear it. `StateGameOver` is only ever entered
-once every continue is spent: the death path checks the counter and sends you
-to the continue screen while any remain, and the game's other route into game
-over zeroes the counter on the instruction before. So hooking that state
-catches exactly "the run is over", and nothing else.
+The continue screen itself does **not** clear it — it only clears once you are
+actually out of the run.
+
+There are two ways out of that screen, and both end the run. `CONTINUE?` is not
+a button prompt: you walk the boy to the `NO` or the `YES` signpost. Walking to
+`YES` spends a continue and drops you back into the stage. Walking to `NO` ends
+it — the game zeroes the continue counter on its way to `StateGameOver`, so
+answering `NO` spends whatever you had left, save included, even if you still
+had all three. That is the intent: saying `NO` is saying the run is done.
+
+So hooking `StateGameOver` catches exactly "the run is over", by either road.
 
 ### Starting a new game over an existing save
 

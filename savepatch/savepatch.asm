@@ -228,12 +228,17 @@ hmu_done:
 ; =====================================================================
 ; Hook D - installed as startFuncs[StateGameOver].
 ;
-; This state is only ever reached with the continue counter at zero: the
-; death path checks it and sends you to the continue screen while any
-; remain, and the game's other route into it zeroes the counter on the
-; instruction before. So arriving here means the run is over on the
-; game's own terms, and the save goes with it - the next boot starts
-; from stage 1-1, the way the game behaved before it could save at all.
+; Reaching this state means the run is over, and the save goes with it -
+; the next boot starts from stage 1-1, the way the game behaved before it
+; could save at all.
+;
+; Two routes lead here and both count. Losing your last life with no
+; continues left comes straight here. Answering NO on the CONTINUE?
+; screen also comes here - that screen is not a button prompt, you walk
+; the boy to the NO or the YES signpost - and NO zeroes the continue
+; counter on the instruction before it arrives, so choosing it spends
+; whatever you had left. Either way the counter reads nought by the time
+; this runs, which is exactly right: saying NO is saying the run is done.
 ;
 ; Only the magic is cleared. That is enough for save_valid to reject the
 ; block, and the next checkpoint rewrites the whole header anyway.

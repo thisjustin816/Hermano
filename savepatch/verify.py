@@ -48,7 +48,7 @@ import patch as P
 # Everything ROM-specific is loaded from the matching profile in patch.py by
 # load_profile(); these are filled in before any check runs.
 CURRENT_STATE = MUNDO = LEVEL = VIDAS = CHECKPOINT = SETSTATE = None
-OFF_SPEC_A = OFF_SPEC_B = OFF_LEVEL = OFF_VIDAS = OFF_MUNDO = None
+OFF_SPEC_A = OFF_SPEC_B = OFF_LEVEL = OFF_VIDAS = OFF_MUNDO = OFF_CONT = None
 PROFILE = None
 
 ST_MENU, ST_TITULO, ST_GAME = 0, 1, 3
@@ -70,7 +70,7 @@ def load_profile(stock_rom):
     """Pull this ROM's addresses and payload offsets from its patch profile,
     so the harness checks the build it was actually given."""
     global PROFILE, CURRENT_STATE, MUNDO, LEVEL, VIDAS, CHECKPOINT, SETSTATE
-    global OFF_SPEC_A, OFF_SPEC_B, OFF_LEVEL, OFF_VIDAS, OFF_MUNDO
+    global OFF_SPEC_A, OFF_SPEC_B, OFF_LEVEL, OFF_VIDAS, OFF_MUNDO, OFF_CONT
     md5 = hashlib.md5(open(stock_rom, "rb").read()).hexdigest()
     if md5 not in P.ROM_PROFILES:
         raise SystemExit(f"no patch profile for {stock_rom} (md5 {md5})")
@@ -91,6 +91,7 @@ def load_profile(stock_rom):
     OFF_LEVEL = offsets[r["SRAM_LEVEL"]]
     OFF_VIDAS = offsets[r["SRAM_VIDAS"]]
     OFF_MUNDO = offsets[r["SRAM_MUNDO"]]
+    OFF_CONT = offsets[r["SRAM_CONT"]]
     return PROFILE
 
 
@@ -349,11 +350,18 @@ def main():
             f"{rate:.2%} of tilemap writes land while the PPU is fetching "
             f"pixels; they will be dropped on hardware")
 
-    print("8. a game over with no continues left clears the save")
-    open(patched + '.ram', 'wb').write(good)
-    for label, state, should_survive in (("continue screen", ST_CONTINUE, True),
-                                         ("game over", ST_GAMEOVER, False)):
-        open(patched + '.ram', 'wb').write(good)
+    print("8. a game over clears the save; the continue screen does not")
+    # Two routes reach StateGameOver: losing the last life with no continues
+    # left, and answering NO on the CONTINUE? screen, which zeroes the counter
+    # on its way here. Both end the run, so both must cost the save - including
+    # the NO route taken with continues still in hand, which is the case that
+    # looks survivable and is not. The wipe must not consult the stored count.
+    spent = resum(good, OFF_CONT, 0)
+    for label, blob, state, should_survive in (
+            ("continue screen", good, ST_CONTINUE, True),
+            ("game over, credits spent", spent, ST_GAMEOVER, False),
+            ("game over via NO, credits left", good, ST_GAMEOVER, False)):
+        open(patched + '.ram', 'wb').write(blob)
         pb = boot(patched)
         to_title(pb)
         pb.tick(30, True)
@@ -364,11 +372,11 @@ def main():
         d = read_sram(pb)
         alive = bytes(d[0:5]) == b'HRMSV'
         ok = alive == should_survive
-        print(f"   {label:<16} -> save {'kept' if alive else 'cleared'}"
+        print(f"   {label:<30} -> save {'kept' if alive else 'cleared'}"
               f"   {'' if ok else '  <-- wrong'}")
         if not ok:
             failures.append(
-                f"entering {label} {'cleared' if not alive else 'kept'} the save")
+                f"{label}: the save was {'kept' if alive else 'cleared'}")
         pb.stop(save=False)
 
     print()
