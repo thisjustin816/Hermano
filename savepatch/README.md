@@ -163,10 +163,10 @@ contain, are drawn to match. Glyphs are 3px wide on a 4px pitch, alongside the
 
 The house rule, read off the stock letters, is that a corner pixel is dropped
 wherever a stroke curves — `C` cuts its two open corners, `D` and `R` cut the
-corners on their round side. `B`, `O` and `U` are 4px wide: `O` and
-`U` because cutting both corners of a 3px row would leave a single pixel, and
-`B` because at 3px it reads pinched beside them; `N` is 4px so its diagonal has
-somewhere to go.
+corners on their round side. `B` stays 3px, since the stock `D` is built
+the same way and is 3px. `O` and `U` are 4px, because cutting both corners of a
+3px row would leave a single pixel; `N` is 4px so its diagonal has somewhere to
+go.
 
 The stock line lives in background tiles `$8C`–`$93` (row 15, columns 6–13).
 Those are never modified. The prompt gets eight fresh tiles at `$89C0` — tile
