@@ -42,13 +42,19 @@ STOCK_SIZE = 512 * 1024
 #
 # Each entry: (lo immediate offset, hi immediate offset, stock target, hook)
 TABLE_HOOKS = [
+    (0x6F25, 0x6F28, 0x7EF7, "hook_menu_start"),   # startFuncs[StateMenu]
     (0x6F2D, 0x6F30, 0x7FA6, "hook_menu_update"),  # updateFuncs[StateMenu]
     (0x6F6E, 0x6F71, 0x7FFC, "hook_game_update"),  # updateFuncs[StateGame]
 ]
 
 # Payload offsets the assembly hard-codes for its change detection; these
 # are re-derived from var_table below and must agree.
-EXPECTED_VAR_OFFSETS = {"SRAM_LEVEL": 0xC11C, "SRAM_VIDAS": 0xC11E, "SRAM_MUNDO": 0xC126}
+EXPECTED_VAR_OFFSETS = {
+    "SRAM_LEVEL": 0xC11C,
+    "SRAM_VIDAS": 0xC11E,
+    "SRAM_MUNDO": 0xC126,
+    "SRAM_CHECKPOINT": 0xC12F,
+}
 
 # Cartridge header fields.
 OFF_CART_TYPE = 0x147
@@ -132,6 +138,17 @@ def check_var_offsets(code, labels, consts):
     if offset != consts["PAYLOAD_LEN"]:
         raise SystemExit(
             f"var_table holds {offset} bytes but PAYLOAD_LEN is {consts['PAYLOAD_LEN']}"
+        )
+    if consts["PROMPT_BYTES"] != consts["PROMPT_TILES"] * 16:
+        raise SystemExit(
+            f"PROMPT_BYTES is {consts['PROMPT_BYTES']} but PROMPT_TILES implies "
+            f"{consts['PROMPT_TILES'] * 16}"
+        )
+    glyph_bytes = labels["var_table"] - labels["prompt_glyphs"]
+    if glyph_bytes != consts["PROMPT_BYTES"]:
+        raise SystemExit(
+            f"prompt_glyphs holds {glyph_bytes} bytes but PROMPT_BYTES is "
+            f"{consts['PROMPT_BYTES']}"
         )
     for name, addr in EXPECTED_VAR_OFFSETS.items():
         want = consts["SRAM_DATA"] + derived[addr]

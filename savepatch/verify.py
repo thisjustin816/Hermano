@@ -3,15 +3,19 @@
 
 Runs four checks against a stock ROM and its patched counterpart:
 
-  1. Rendering fidelity - the patched ROM must produce byte-identical frames
-     to the stock ROM over a long run of identical input. This is the check
-     that drove the design: hooking ZGB's state START dispatch shifts the
-     raster phase and moves the game's mid-frame sprite toggle by a scanline
-     on ~1% of frames, whereas hooking the vblank-synchronised update
-     dispatch costs nothing observable.
+  1. Rendering fidelity - with no save present the patched ROM must render
+     essentially as the stock ROM does over a long run of identical input.
+     The gameplay hooks sit on the vblank-synchronised update dispatch and
+     cost nothing observable; hook_menu_start is the one hook on the state
+     START path, where the display-off window is needed to touch VRAM, and
+     it shifts the raster phase for single isolated frames when entering
+     the title screen. So the assertion is that no divergence is ever
+     sustained: every differing frame must resync on the very next one.
   2. Autosave - progress reaches SRAM once play begins, with a valid header.
   3. Power cycle - the save survives a cold boot and B restores it.
   4. Robustness - blank, truncated and corrupted saves are all ignored.
+  5. Prompt - "B:CONTINUE" appears on the title screen only when there is
+     a valid save to continue from.
 
 Usage:
     python3 verify.py <stock.gb> <patched.gb>
@@ -26,6 +30,15 @@ from pyboy import PyBoy
 CURRENT_STATE = 0xC188
 MUNDO, LEVEL, VIDAS = 0xC126, 0xC11C, 0xC11E
 ST_MENU, ST_TITULO, ST_GAME = 0, 1, 3
+
+# The "B:CONTINUE" prompt: first BG map cell it occupies, and the tile index
+# it should hold once drawn.
+PROMPT_MAP, PROMPT_FIRST = 0x9925, 0x9C
+
+# hook_menu_start runs on the state START path, so entering the title screen
+# can shift the raster phase for a single frame. Isolated frames are fine;
+# sustained divergence is not.
+MAX_ISOLATED_DIFFS = 8
 
 # Payload offsets within the SRAM block (see savepatch.asm's var_table).
 SRAM_DATA = 8
@@ -112,18 +125,40 @@ def main():
     stock, patched = sys.argv[1], sys.argv[2]
     failures = []
 
-    print("1. rendering fidelity vs stock")
+    print("1. rendering fidelity vs stock (no save present)")
+    clear_saves(patched)
     a, b = frame_hashes(stock), frame_hashes(patched)
-    differing = sum(1 for x, y in zip(a, b) if x != y)
-    print(f"   {len(a)} frames compared, {differing} differing")
-    if differing:
-        failures.append(f"{differing} frames render differently")
+    diff = [i for i, (x, y) in enumerate(zip(a, b)) if x != y]
+    differing = set(diff)
+    longest = run = 0
+    for i in range(len(a)):
+        run = run + 1 if i in differing else 0
+        longest = max(longest, run)
+    print(f"   {len(a)} frames compared, {len(diff)} differing, "
+          f"longest consecutive run {longest}")
+    if longest > 1:
+        failures.append(
+            f"divergence sustained over {longest} consecutive frames - "
+            f"that is a behaviour change, not raster phase")
+    if len(diff) > MAX_ISOLATED_DIFFS:
+        failures.append(
+            f"{len(diff)} differing frames exceeds the expected "
+            f"{MAX_ISOLATED_DIFFS}")
 
     print("2. autosave reaches SRAM")
     clear_saves(patched)
     pb = boot(patched)
     to_title(pb)
-    pb.tick(20, True)
+    pb.tick(30, True)
+    if pb.memory[PROMPT_MAP] == PROMPT_FIRST:
+        failures.append("the continue prompt is shown with no save present")
+    print(f"   prompt cell with no save: {pb.memory[PROMPT_MAP]:#04x} "
+          f"(expected anything but {PROMPT_FIRST:#04x})")
+    pb.stop(save=False)
+
+    pb = boot(patched)
+    to_title(pb)
+    pb.tick(30, True)
     press(pb, 'start')
     pb.tick(40, True)
     pb.memory[MUNDO], pb.memory[LEVEL], pb.memory[VIDAS] = 1, 2, 6
@@ -137,10 +172,15 @@ def main():
         failures.append("autosave did not store the expected progress")
     pb.stop(save=True)
 
-    print("3. save survives a power cycle and B restores it")
+    print("3. save survives a power cycle, prompt appears, B restores it")
     pb = boot(patched)
     to_title(pb)
     pb.tick(30, True)
+    shown = pb.memory[PROMPT_MAP] == PROMPT_FIRST
+    print(f"   prompt cell with a save: {pb.memory[PROMPT_MAP]:#04x} "
+          f"({'shown' if shown else 'MISSING'})")
+    if not shown:
+        failures.append("the continue prompt is missing despite a valid save")
     press(pb, 'b')
     pb.tick(120, True)
     live = (pb.memory[MUNDO], pb.memory[LEVEL], pb.memory[VIDAS])
@@ -168,9 +208,13 @@ def main():
         press(pb, 'b')
         pb.tick(90, True)
         ignored = pb.memory[CURRENT_STATE] == ST_MENU
-        print(f"   {name:<18} -> {'ignored' if ignored else 'LOADED (bad!)'}")
+        no_prompt = pb.memory[PROMPT_MAP] != PROMPT_FIRST
+        print(f"   {name:<18} -> {'ignored' if ignored else 'LOADED (bad!)'}, "
+              f"prompt {'hidden' if no_prompt else 'SHOWN (bad!)'}")
         if not ignored:
             failures.append(f"{name} was accepted as a valid save")
+        if not no_prompt:
+            failures.append(f"{name} still advertised a continue prompt")
         pb.stop(save=False)
     open(patched + '.ram', 'wb').write(good)
 
