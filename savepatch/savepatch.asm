@@ -358,17 +358,17 @@ magic:
 ; ---- lifted pixel for pixel out of those tiles; B, O, N and U are drawn
 ; ---- to match. The house rule, read off the stock letters, is that a
 ; ---- corner pixel is dropped wherever a stroke curves - C cuts its two
-; ---- open corners, D and R cut the corners on their round side. O and U
-; ---- are four pixels wide so they can follow it (cutting both corners of
-; ---- a 3px row would leave a single pixel), and N is four so its
-; ---- diagonal has somewhere to go. Two bytes per row, low bitplane then high: the high
+; ---- open corners, D and R cut the corners on their round side. B, O and
+; ---- U are four pixels wide: O and U because cutting both corners of a
+; ---- 3px row would leave a single pixel, and B because at three it reads
+; ---- pinched beside them. N is four so its diagonal has somewhere to go. Two bytes per row, low bitplane then high: the high
 ; ---- plane is all ones throughout, so blank pixels read as colour 2 (the
 ; ---- line's background) and text pixels as colour 3 (black), exactly as
 ; ---- the stock tiles are drawn.
 line_tiles:
-; text width 40px, centred at x+12 within the 64px credits block
+; text width 41px, centred at x+11 within the 64px credits block
         db $00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF,$00,$FF   ; tile 0
-        db $00,$FF,$00,$FF,$0C,$FF,$0A,$FF,$0C,$FF,$0A,$FF,$0C,$FF,$00,$FF   ; tile 1
+        db $00,$FF,$00,$FF,$1C,$FF,$12,$FF,$1C,$FF,$12,$FF,$1C,$FF,$00,$FF   ; tile 1
         db $00,$FF,$00,$FF,$0C,$FF,$91,$FF,$11,$FF,$91,$FF,$0C,$FF,$00,$FF   ; tile 2
         db $00,$FF,$00,$FF,$C9,$FF,$2D,$FF,$2B,$FF,$29,$FF,$C9,$FF,$00,$FF   ; tile 3
         db $00,$FF,$00,$FF,$75,$FF,$25,$FF,$25,$FF,$25,$FF,$25,$FF,$00,$FF   ; tile 4
